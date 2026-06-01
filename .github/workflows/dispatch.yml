@@ -1,0 +1,26 @@
+name: GTM Flow dispatcher
+
+# Fires the GTM Flow dispatcher on a schedule so scheduled campaigns and due
+# follow-ups go out even when nobody has the app open. The Vercel Hobby plan
+# only runs platform crons once/day, so this GitHub Action is the always-on
+# trigger. It hits the public /api/dispatch/tick endpoint (no secret needed);
+# the endpoint only sends work that is already due and stays under the daily cap.
+#
+# Runs every 30 min as a safety margin — GitHub's scheduler can be delayed a few
+# minutes under load, so two attempts per hour guarantee delivery lands within
+# the hour block of any scheduled time.
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger dispatcher
+        run: |
+          curl -sS -X GET "https://gtm-flow-jet.vercel.app/api/dispatch/tick" \
+            -H "user-agent: github-actions-gtm-dispatch" \
+            -w "\nHTTP %{http_code}\n" --max-time 60 --retry 2
