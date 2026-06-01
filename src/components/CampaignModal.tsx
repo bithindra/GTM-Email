@@ -229,7 +229,7 @@ export default function CampaignModal({
         <p className="text-xs text-muted mb-4">
           {when === "now"
             ? "Emails go out immediately (auto-paced under the daily cap)."
-            : "Queued — it sends automatically once the scheduled time passes and GTM Flow is open in a tab, with a daily cron as backstop. You can also open the campaign and send it manually any time."}
+            : "Queued — it sends automatically within the hour of your scheduled time, even with the app closed. You can also open the campaign and send it manually any time."}
         </p>
 
         {error && <p className="text-sm text-danger mb-3">{error}</p>}
