@@ -21,11 +21,15 @@ export default function Dashboard() {
   const [campaigns, setCampaigns] = useState<{ id: string; name: string; status: string; recipientCount: number; createdAt: string }[]>([]);
 
   useEffect(() => {
-    // Fire due scheduled sends / follow-ups, then load stats (Hobby cron is daily-only).
-    fetch("/api/dispatch/tick").catch(() => {}).finally(() => {
-      fetch("/api/stats").then((r) => r.json()).then(setStats);
-      fetch("/api/campaigns").then((r) => r.json()).then((d) => setCampaigns(d.campaigns ?? []));
-    });
+    // Load dashboard data immediately. The dispatcher tick runs separately via
+    // AutoDispatch (in the layout), so the UI never waits on the ~3.5s tick.
+    const load = () => {
+      fetch("/api/stats").then((r) => r.json()).then(setStats).catch(() => {});
+      fetch("/api/campaigns").then((r) => r.json()).then((d) => setCampaigns(d.campaigns ?? [])).catch(() => {});
+    };
+    load();
+    const t = setTimeout(load, 4000);
+    return () => clearTimeout(t);
   }, []);
 
   const t = stats?.totals;
