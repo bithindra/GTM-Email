@@ -476,12 +476,13 @@ class PgStore implements Store {
     const attachmentsJson = attachments.length ? JSON.stringify(attachments) : null;
     await sql`INSERT INTO campaigns (id,name,template_id,followup_template_id,followup_days,status,scheduled_at,attachments,created_at)
       VALUES (${id},${name},${templateId},${followupTemplateId},${followupDays},${status},${scheduledAt},${attachmentsJson},now())`;
-    for (const pid of prospectIds) {
-      const pr = await sql`SELECT * FROM prospects WHERE id=${pid}`;
-      if (!pr.length) continue;
-      const p = pr[0];
+    // Bulk-insert all recipients in a single round-trip. Inserting one row per
+    // prospect (as before) meant ~2 network calls × N prospects to Neon — a
+    // 40-prospect list took ~18s and made the UI look frozen. This is one query.
+    if (prospectIds.length) {
       await sql`INSERT INTO recipients (id,campaign_id,prospect_id,name,email,company,status,opens,clicks)
-        VALUES (${uuid()},${id},${p.id},${p.name},${p.email},${p.company},'queued',0,0)`;
+        SELECT gen_random_uuid()::text, ${id}, p.id, p.name, p.email, p.company, 'queued', 0, 0
+        FROM prospects p WHERE p.id = ANY(${prospectIds})`;
     }
     return { id, name, templateId, followupTemplateId, followupDays, status, scheduledAt, createdAt: new Date().toISOString(), recipientCount: prospectIds.length, attachments } as Campaign;
   }
