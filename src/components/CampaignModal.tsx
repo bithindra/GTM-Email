@@ -138,7 +138,7 @@ export default function CampaignModal({
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={onClose}>
-      <div className="card p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+      <div className="card p-6 w-full max-w-md max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <h3 className="font-bold text-lg mb-1">New campaign</h3>
         <p className="text-sm text-muted mb-4">{resolvedCount} recipients</p>
 
@@ -232,8 +232,8 @@ export default function CampaignModal({
             : "Queued — it sends automatically within the hour of your scheduled time, even with the app closed. You can also open the campaign and send it manually any time."}
         </p>
 
-        {error && <p className="text-sm text-danger mb-3">{error}</p>}
-        <div className="flex justify-end gap-2">
+        {error && <p className="text-sm text-danger mb-3 font-medium">{error}</p>}
+        <div className="flex justify-end gap-2 sticky bottom-0 bg-white pt-3 -mx-6 px-6 -mb-6 pb-6 border-t border-border-soft">
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
           <button className="btn btn-primary" disabled={busy} onClick={create}>
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}
