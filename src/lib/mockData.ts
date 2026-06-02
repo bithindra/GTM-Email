@@ -6,7 +6,7 @@ const LAST = ["Mehta", "Garcia", "Smith", "Chen", "Müller", "Rossi", "Kim", "Du
 const COMPANY_WORDS = ["Nova", "Vertex", "Lumen", "Quanta", "Forge", "Atlas", "Drift", "Pulse", "Strato", "Kindred", "Beacon", "Helio", "Cobalt", "Orbit", "Tessera", "Mosaic", "Cinder", "Verve", "Ridge", "Lattice"];
 const COMPANY_SUFFIX = ["Labs", "AI", "Systems", "Technologies", "Health", "Logistics", "Foods", "Studios", "Capital", "Works"];
 const INDUSTRIES = ["SaaS", "Fintech", "Healthtech", "E-commerce", "Logistics", "EdTech", "Manufacturing", "Marketing", "Cybersecurity", "Clean Energy"];
-const TITLES = ["Founder & CEO", "Co-Founder", "Founder", "Managing Director", "Owner", "CEO", "President"];
+const TITLES = ["Founder & CEO", "Co-Founder", "Founder", "Managing Director", "Owner", "CEO", "President", "CFO", "Marketing Head", "HR Head"];
 
 const CITIES: Record<string, string[]> = {
   "United States": ["San Francisco", "New York", "Austin", "Boston", "Seattle"],

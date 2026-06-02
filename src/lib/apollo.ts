@@ -8,6 +8,25 @@ const SIZE_MAP: Record<string, string> = {
   "201-500": "201,500", "501-1000": "501,1000", "1001-5000": "1001,5000",
 };
 
+// A few role chips map to several real-world title variants so Apollo returns
+// the actual decision-makers, not just literal-string matches. Chips not listed
+// here (Founder, CEO, …) pass through unchanged.
+const TITLE_SYNONYMS: Record<string, string[]> = {
+  "CFO": ["CFO", "Chief Financial Officer", "Head of Finance", "VP of Finance", "Finance Director", "Financial Controller"],
+  "Marketing Head": ["Head of Marketing", "Marketing Head", "Chief Marketing Officer", "CMO", "VP of Marketing", "VP Marketing", "Marketing Director", "Growth Lead"],
+  "HR Head": ["Head of HR", "Head of Human Resources", "HR Head", "Chief Human Resources Officer", "CHRO", "CHRO/CPO", "VP of Human Resources", "HR Director", "Head of People", "People Operations Lead"],
+};
+
+function expandTitles(titles: string[]): string[] {
+  const out = new Set<string>();
+  for (const t of titles) {
+    const syn = TITLE_SYNONYMS[t];
+    if (syn) syn.forEach((s) => out.add(s));
+    else out.add(t);
+  }
+  return [...out];
+}
+
 function bandFromCount(n?: number): string {
   if (!n) return "";
   if (n <= 10) return "1-10";
@@ -55,7 +74,7 @@ export async function searchProspects(filters: SearchFilters): Promise<{ source:
   if (!key) return { source: "mock", prospects: generateMockProspects(filters) };
 
   const body: Record<string, unknown> = {
-    person_titles: filters.titles.length ? filters.titles : ["Founder", "CEO", "Owner"],
+    person_titles: filters.titles.length ? expandTitles(filters.titles) : ["Founder", "CEO", "Owner"],
     person_locations: filters.countries,
     organization_num_employees_ranges: filters.sizes.map((s) => SIZE_MAP[s]).filter(Boolean),
     q_keywords: filters.keywords || undefined,

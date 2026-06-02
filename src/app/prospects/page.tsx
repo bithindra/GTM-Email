@@ -10,7 +10,7 @@ import CampaignModal from "@/components/CampaignModal";
 
 const COUNTRIES = ["United States", "United Kingdom", "Germany", "India", "Singapore", "Canada", "Australia", "United Arab Emirates", "Netherlands", "Brazil", "France", "Japan", "Spain", "Italy", "Ireland", "Sweden", "Switzerland", "Israel", "Saudi Arabia", "South Africa", "Nigeria", "Kenya", "Mexico", "Indonesia"];
 const SIZES = ["1-10", "11-50", "51-200", "201-500", "501-1000", "1001-5000"];
-const TITLES = ["Founder", "Co-Founder", "Founder & CEO", "CEO", "Owner", "Managing Director", "President"];
+const TITLES = ["Founder", "Co-Founder", "Founder & CEO", "CEO", "Owner", "Managing Director", "President", "CFO", "Marketing Head", "HR Head"];
 
 function Chip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
