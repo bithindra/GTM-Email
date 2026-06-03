@@ -47,7 +47,10 @@ export async function POST(req: NextRequest) {
   }).filter((p) => p.email); // only keep those we could reveal an email for
 
   if (!incoming.length) {
-    return NextResponse.json({ error: "no emails could be revealed for the selected people", creditsUsed });
+    const reason = revealed.error
+      ? `Apollo couldn't reveal emails — ${revealed.error}. If this is a rate limit, wait a few minutes and retry.`
+      : "no emails could be revealed for the selected people";
+    return NextResponse.json({ error: reason, creditsUsed });
   }
 
   await store.saveProspects(incoming);

@@ -136,17 +136,17 @@ export async function searchProspects(filters: SearchFilters): Promise<{ source:
 }
 
 // Reveal verified emails for selected people (1 credit per match). Up to 10 per call.
+export type RevealMap = Map<string, { email: string; name: string; status: string; linkedin: string }> & { error?: string };
+
 export async function enrichPeople(
   items: { apolloId?: string; firstName?: string; lastName?: string; name?: string; domain?: string; linkedin?: string; company?: string }[],
-): Promise<Map<string, { email: string; name: string; status: string; linkedin: string }>> {
+): Promise<RevealMap> {
   const key = process.env.APOLLO_API_KEY;
-  const out = new Map<string, { email: string; name: string; status: string; linkedin: string }>();
+  const out = new Map<string, { email: string; name: string; status: string; linkedin: string }>() as RevealMap;
   if (!key || items.length === 0) return out;
   const apiKey: string = key;
 
-  // Build the 10-per-call chunks, then run them with bounded concurrency.
-  // Sequential reveal made large saves (250-1000) run for minutes and time out;
-  // 5 chunks in parallel cuts that ~5x while staying within Apollo rate limits.
+  // Build the 10-per-call chunks (Apollo's bulk_match max), run sequentially.
   const chunks: { start: number; items: typeof items }[] = [];
   for (let i = 0; i < items.length; i += 10) chunks.push({ start: i, items: items.slice(i, i + 10) });
 
@@ -164,9 +164,15 @@ export async function enrichPeople(
       const res = await fetch(`${API}/people/bulk_match`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", "x-api-key": apiKey },
-        body: JSON.stringify({ details }),
+        body: JSON.stringify({ details, reveal_personal_emails: false }),
       });
       const data = await res.json();
+      if (!res.ok || data.error || data.error_code) {
+        // Surface the real reason (rate limit, plan limit, credits) instead of
+        // silently looking like "no emails available".
+        out.error = `Apollo ${res.status}: ${data.error || data.error_code || res.statusText}`;
+        return;
+      }
       const matches: ApolloPerson[] = data.matches ?? [];
       matches.forEach((m, idx) => {
         const reqId = details[idx]?.id;
@@ -178,8 +184,8 @@ export async function enrichPeople(
           linkedin: m.linkedin_url || "",
         });
       });
-    } catch {
-      // skip chunk on error
+    } catch (e) {
+      out.error = (e as Error).message;
     }
   }
 
