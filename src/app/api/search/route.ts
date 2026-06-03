@@ -3,6 +3,7 @@ import { searchProspects } from "@/lib/apollo";
 import type { SearchFilters } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60; // large pulls page through Apollo (100 results/page)
 
 // Live Apollo discovery. Returns people (emails masked until saved/enriched).
 export async function POST(req: NextRequest) {

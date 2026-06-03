@@ -142,11 +142,17 @@ export async function enrichPeople(
   const key = process.env.APOLLO_API_KEY;
   const out = new Map<string, { email: string; name: string; status: string; linkedin: string }>();
   if (!key || items.length === 0) return out;
+  const apiKey: string = key;
 
-  for (let i = 0; i < items.length; i += 10) {
-    const chunk = items.slice(i, i + 10);
-    const details = chunk.map((it, idx) => ({
-      id: it.apolloId || `idx_${i + idx}`,
+  // Build the 10-per-call chunks, then run them with bounded concurrency.
+  // Sequential reveal made large saves (250-1000) run for minutes and time out;
+  // 5 chunks in parallel cuts that ~5x while staying within Apollo rate limits.
+  const chunks: { start: number; items: typeof items }[] = [];
+  for (let i = 0; i < items.length; i += 10) chunks.push({ start: i, items: items.slice(i, i + 10) });
+
+  async function runChunk(c: { start: number; items: typeof items }) {
+    const details = c.items.map((it, idx) => ({
+      id: it.apolloId || `idx_${c.start + idx}`,
       first_name: it.firstName,
       last_name: it.lastName,
       name: it.name,
@@ -157,7 +163,7 @@ export async function enrichPeople(
     try {
       const res = await fetch(`${API}/people/bulk_match`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", "x-api-key": key },
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", "x-api-key": apiKey },
         body: JSON.stringify({ details }),
       });
       const data = await res.json();
@@ -175,6 +181,11 @@ export async function enrichPeople(
     } catch {
       // skip chunk on error
     }
+  }
+
+  const CONCURRENCY = 5;
+  for (let i = 0; i < chunks.length; i += CONCURRENCY) {
+    await Promise.all(chunks.slice(i, i + CONCURRENCY).map(runChunk));
   }
   return out;
 }

@@ -39,9 +39,8 @@ export async function processApolloRequests(store: Store) {
       continue;
     }
     await store.saveProspects(incoming);
-    const all = await store.listProspects();
-    const byEmail = new Map(all.map((p) => [p.email, p.id]));
-    const ids = incoming.map((p) => byEmail.get(p.email)).filter((x): x is string => !!x);
+    const byEmail = await store.getProspectIdsByEmails(incoming.map((p) => p.email));
+    const ids = incoming.map((p) => byEmail.get(p.email.toLowerCase())).filter((x): x is string => !!x);
     const f = req.filters;
     const name = `${(f.titles || []).slice(0, 2).join("/") || "Leads"} · ${(f.countries || []).join(", ")} · ${new Date().toLocaleDateString()}`;
     const list = await store.createList(name, ids, "apollo-auto");

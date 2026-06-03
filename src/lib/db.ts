@@ -11,6 +11,7 @@ import type { Prospect, Template, Campaign, Recipient, RecipientStatus, List, So
 export interface Store {
   listProspects(): Promise<Prospect[]>;
   saveProspects(p: Prospect[]): Promise<Prospect[]>;
+  getProspectIdsByEmails(emails: string[]): Promise<Map<string, string>>; // lowercased email -> id
   getTemplates(): Promise<Template[]>;
   getTemplate(id: string): Promise<Template | null>;
   saveTemplate(t: Omit<Template, "updatedAt"> & { id?: string }): Promise<Template>;
@@ -152,6 +153,15 @@ class MemoryStore implements Store {
       added.push(p);
     }
     return added;
+  }
+  async getProspectIdsByEmails(emails: string[]) {
+    const want = new Set(emails.map((e) => (e || "").toLowerCase()));
+    const out = new Map<string, string>();
+    for (const p of this.prospects) {
+      const e = (p.email || "").toLowerCase();
+      if (e && want.has(e)) out.set(e, p.id);
+    }
+    return out;
   }
   async getTemplates() {
     return [...this.templates].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -422,14 +432,38 @@ class PgStore implements Store {
   }
   async saveProspects(incoming: Prospect[]) {
     const sql = await this.db();
-    const added: Prospect[] = [];
-    for (const p of incoming) {
-      const res = await sql`INSERT INTO prospects (id,name,title,company,company_size,industry,country,city,linkedin,email,email_status,created_at)
-        VALUES (${p.id},${p.name},${p.title},${p.company},${p.companySize},${p.industry},${p.country},${p.city},${p.linkedin},${p.email || null},${p.emailStatus},now())
-        ON CONFLICT (email) DO NOTHING RETURNING *`;
-      if (res.length) added.push(this.mapProspect(res[0]));
-    }
-    return added;
+    if (!incoming.length) return [];
+    // Dedupe within the batch by email, then insert all rows in ONE query via
+    // unnest (was one round-trip per prospect — far too slow for big lists).
+    const seen = new Set<string>();
+    const uniq = incoming.filter((p) => {
+      const e = (p.email || "").toLowerCase();
+      if (e && seen.has(e)) return false;
+      if (e) seen.add(e);
+      return true;
+    });
+    const col = (f: (p: Prospect) => string) => uniq.map(f);
+    const rows = await sql`
+      INSERT INTO prospects (id,name,title,company,company_size,industry,country,city,linkedin,email,email_status,created_at)
+      SELECT t.id,t.name,t.title,t.company,t.company_size,t.industry,t.country,t.city,t.linkedin,NULLIF(t.email,''),t.email_status,now()
+      FROM unnest(
+        ${col((p) => p.id)}::text[], ${col((p) => p.name || "")}::text[], ${col((p) => p.title || "")}::text[],
+        ${col((p) => p.company || "")}::text[], ${col((p) => p.companySize || "")}::text[], ${col((p) => p.industry || "")}::text[],
+        ${col((p) => p.country || "")}::text[], ${col((p) => p.city || "")}::text[], ${col((p) => p.linkedin || "")}::text[],
+        ${col((p) => (p.email || "").toLowerCase())}::text[], ${col((p) => p.emailStatus || "unknown")}::text[]
+      ) AS t(id,name,title,company,company_size,industry,country,city,linkedin,email,email_status)
+      ON CONFLICT (email) DO NOTHING
+      RETURNING *`;
+    return rows.map((r) => this.mapProspect(r));
+  }
+  async getProspectIdsByEmails(emails: string[]) {
+    const out = new Map<string, string>();
+    if (!emails.length) return out;
+    const sql = await this.db();
+    const lower = emails.map((e) => (e || "").toLowerCase()).filter(Boolean);
+    const rows = await sql`SELECT id, email FROM prospects WHERE email = ANY(${lower}::text[])`;
+    for (const r of rows) out.set((r.email as string || "").toLowerCase(), r.id as string);
+    return out;
   }
   async getTemplates() {
     const sql = await this.db();
@@ -568,8 +602,10 @@ class PgStore implements Store {
       await sql`INSERT INTO lists (id,name,source,created_at) VALUES (${id},${name},${source},now())`;
       createdAt = new Date().toISOString();
     }
-    for (const pid of prospectIds) {
-      await sql`INSERT INTO list_members (list_id,prospect_id) VALUES (${id},${pid}) ON CONFLICT DO NOTHING`;
+    if (prospectIds.length) {
+      await sql`INSERT INTO list_members (list_id, prospect_id)
+        SELECT ${id}, x FROM unnest(${prospectIds}::text[]) AS x
+        ON CONFLICT DO NOTHING`;
     }
     const c = await sql`SELECT count(*)::int n FROM list_members WHERE list_id=${id}`;
     return { id, name, source, count: c[0].n, createdAt } as List;
@@ -592,10 +628,11 @@ class PgStore implements Store {
     return rows.map((r) => this.mapProspect(r));
   }
   async addToList(listId: string, prospectIds: string[]) {
+    if (!prospectIds.length) return;
     const sql = await this.db();
-    for (const pid of prospectIds) {
-      await sql`INSERT INTO list_members (list_id,prospect_id) VALUES (${listId},${pid}) ON CONFLICT DO NOTHING`;
-    }
+    await sql`INSERT INTO list_members (list_id, prospect_id)
+      SELECT ${listId}, x FROM unnest(${prospectIds}::text[]) AS x
+      ON CONFLICT DO NOTHING`;
   }
   async removeFromList(listId: string, prospectId: string) {
     const sql = await this.db();

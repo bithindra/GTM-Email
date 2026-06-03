@@ -5,6 +5,7 @@ import { enrichPeople } from "@/lib/apollo";
 import type { Prospect } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60; // revealing many emails (paginated saves) can take a while
 
 // Reveal emails for the selected Apollo people (1 credit each), save them as
 // prospects, and add to a new or existing list.
@@ -50,9 +51,11 @@ export async function POST(req: NextRequest) {
   }
 
   await store.saveProspects(incoming);
-  const all = await store.listProspects();
-  const byEmail = new Map(all.map((p) => [p.email, p.id]));
-  const ids = incoming.map((p) => byEmail.get(p.email)).filter((x): x is string => !!x);
+  // Resolve ids by email directly (covers both newly inserted and pre-existing
+  // prospects). The old listProspects() lookup was capped at 1000 rows, so on
+  // larger accounts some ids silently went missing and never joined the list.
+  const byEmail = await store.getProspectIdsByEmails(incoming.map((p) => p.email));
+  const ids = incoming.map((p) => byEmail.get(p.email.toLowerCase())).filter((x): x is string => !!x);
 
   let list;
   if (b.listId) {
