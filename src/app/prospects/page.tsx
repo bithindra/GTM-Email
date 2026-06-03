@@ -235,7 +235,7 @@ export default function ProspectsPage() {
           <div>
             <label className="text-sm font-semibold block mb-2">Max results</label>
             <select className="select" value={limit} onChange={(e) => setLimit(Number(e.target.value))}>
-              {[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
+              {[10, 25, 50, 100, 250, 500, 1000].map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
           </div>
         </div>

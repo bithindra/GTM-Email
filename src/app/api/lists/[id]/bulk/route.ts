@@ -16,8 +16,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     await store.addToList(id, b.addProspectIds);
   }
   if (b.mergeFromListId) {
-    const members = await store.getListMembers(b.mergeFromListId);
-    await store.addToList(id, members.map((m) => m.id));
+    // Dedupe by email so a client already in this list (even under a different
+    // prospect record / email casing) is never added twice — one entry per email.
+    const [targetMembers, fromMembers] = await Promise.all([
+      store.getListMembers(id),
+      store.getListMembers(b.mergeFromListId),
+    ]);
+    const seen = new Set(targetMembers.map((m) => (m.email || "").trim().toLowerCase()).filter(Boolean));
+    const toAdd: string[] = [];
+    for (const m of fromMembers) {
+      const email = (m.email || "").trim().toLowerCase();
+      if (email) {
+        if (seen.has(email)) continue; // already represented in the target list
+        seen.add(email);
+      }
+      toAdd.push(m.id);
+    }
+    if (toAdd.length) await store.addToList(id, toAdd);
   }
   if (Array.isArray(b.removeProspectIds) && b.removeProspectIds.length) {
     for (const pid of b.removeProspectIds) await store.removeFromList(id, pid);

@@ -79,7 +79,7 @@ export async function searchProspects(filters: SearchFilters): Promise<{ source:
     organization_num_employees_ranges: filters.sizes.map((s) => SIZE_MAP[s]).filter(Boolean),
     q_keywords: filters.keywords || undefined,
     page: 1,
-    per_page: Math.min(filters.limit || 25, 100),
+    per_page: 100, // Apollo's max page size; we paginate below to reach `target`
   };
   if (filters.industries.length) body.q_organization_keyword_tags = filters.industries;
   if (filters.seniorities?.length) body.person_seniorities = filters.seniorities;
@@ -102,22 +102,34 @@ export async function searchProspects(filters: SearchFilters): Promise<{ source:
     return res.json();
   }
 
+  // How many people to pull in total (paginated 100 at a time). Capped at 1000.
+  const target = Math.min(filters.limit || 25, 1000);
+
   try {
-    let data = await call(body);
     let note: string | undefined;
-    // Some filters (e.g. revenue_range) are gated as "advanced" on lower Apollo
-    // plans. If that's the blocker, drop them and retry so the search still runs.
+    // Page 1 — also handles the "advanced filter needs a higher plan" retry.
+    let data = await call({ ...body, page: 1 });
     const errStr = String(data.error || data.error_code || "");
     if (errStr && /advanced filter|revenue_range|not.*access/i.test(errStr)) {
       const dropped: string[] = [];
       if (body.revenue_range) { delete body.revenue_range; dropped.push("revenue"); }
       if (body.person_seniorities && /senior/i.test(errStr)) { delete body.person_seniorities; dropped.push("seniority"); }
-      data = await call(body);
+      data = await call({ ...body, page: 1 });
       if (dropped.length) note = `${dropped.join(" & ")} filter needs a higher Apollo plan — ignored.`;
     }
     if (data.error || data.error_code) return { source: "apollo", prospects: [], error: data.error || data.error_code };
-    const people: ApolloPerson[] = data.people ?? data.contacts ?? [];
-    return { source: "apollo", prospects: people.map(mapPerson), note };
+
+    const collected: ApolloPerson[] = [...((data.people ?? data.contacts ?? []) as ApolloPerson[])];
+    const maxPages = Math.ceil(target / 100);
+    // Fetch additional pages until we hit the target or run out of results.
+    for (let page = 2; collected.length < target && page <= maxPages; page++) {
+      const more = await call({ ...body, page });
+      const people: ApolloPerson[] = more.people ?? more.contacts ?? [];
+      if (!people.length) break;
+      collected.push(...people);
+      if (people.length < 100) break; // last page
+    }
+    return { source: "apollo", prospects: collected.slice(0, target).map(mapPerson), note };
   } catch (e) {
     return { source: "apollo", prospects: [], error: (e as Error).message };
   }

@@ -20,7 +20,8 @@ export async function processApolloRequests(store: Store) {
       await store.fulfillSourcingRequest(req.id, { resultListId: null, importedCount: 0, note: "No Apollo matches.", status: "rejected" });
       continue;
     }
-    const cap = Math.min(prospects.length, req.filters.limit || 25, 50);
+    // Honor the requested pull size (each reveal = 1 Apollo credit). Capped at 1000.
+    const cap = Math.min(prospects.length, req.filters.limit || 25, 1000);
     const capped = prospects.slice(0, cap);
     const revealed = await enrichPeople(capped.map((p) => ({
       apolloId: p.apolloId, firstName: p.firstName, lastName: p.lastName, name: p.name, domain: p.domain, linkedin: p.linkedin, company: p.company,
