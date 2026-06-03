@@ -8,7 +8,21 @@ import type { Prospect, List, SourcingRequest } from "@/lib/types";
 import { INDUSTRY_OPTIONS, SENIORITY_OPTIONS, REVENUE_BANDS } from "@/lib/filters";
 import CampaignModal from "@/components/CampaignModal";
 
-const COUNTRIES = ["United States", "United Kingdom", "Germany", "India", "Singapore", "Canada", "Australia", "United Arab Emirates", "Netherlands", "Brazil", "France", "Japan", "Spain", "Italy", "Ireland", "Sweden", "Switzerland", "Israel", "Saudi Arabia", "South Africa", "Nigeria", "Kenya", "Mexico", "Indonesia"];
+const COUNTRIES = [
+  // Core Western markets
+  "United States", "United Kingdom", "Canada", "Australia", "New Zealand", "Ireland",
+  "Germany", "Netherlands", "France", "Spain", "Italy", "Belgium", "Switzerland",
+  "Sweden", "Norway", "Denmark", "Finland", "Poland", "Portugal", "Austria",
+  // India + Asia-Pacific buyers of Indian consulting/IT
+  "India", "Singapore", "Malaysia", "Thailand", "Philippines", "Vietnam", "Indonesia",
+  "Hong Kong", "Japan", "South Korea", "Taiwan", "Bangladesh", "Sri Lanka", "Nepal",
+  // Gulf & Middle East
+  "United Arab Emirates", "Saudi Arabia", "Qatar", "Kuwait", "Bahrain", "Oman", "Israel",
+  // Africa
+  "South Africa", "Nigeria", "Kenya", "Egypt", "Ghana", "Tanzania", "Mauritius",
+  // Latin America
+  "Brazil", "Mexico", "Chile", "Colombia", "Argentina",
+];
 const SIZES = ["1-10", "11-50", "51-200", "201-500", "501-1000", "1001-5000"];
 const TITLES = ["Founder", "Co-Founder", "Founder & CEO", "CEO", "Owner", "Managing Director", "President", "CFO", "Marketing Head", "HR Head"];
 
