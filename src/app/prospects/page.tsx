@@ -151,15 +151,32 @@ export default function ProspectsPage() {
       let d;
       if (source === "apollo") {
         // Live Apollo results: reveal emails (1 credit each) + save selected.
+        // Reveal is rate-limited and slow, so we save in small chunks: the first
+        // chunk creates the list, the rest append to it. Keeps each request fast
+        // and lets very large pulls (250-1000) save reliably with live progress.
         const chosen = results.filter((r) => selected.has(r.id));
-        const payload: Record<string, unknown> = { prospects: chosen };
-        if (saveMode === "new") { if (!newListName.trim()) { setSavingList(false); return; } payload.listName = newListName.trim(); }
-        else { if (!existingListId) { setSavingList(false); return; } payload.listId = existingListId; }
-        d = await fetch("/api/apollo/save", {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
-        }).then((r) => r.json());
-        if (d.list) setListNote(`Revealed ${d.creditsUsed} emails (Apollo credits) · saved ${d.saved} to "${d.list.name}" (${d.list.count} total). Open it in Lists & Upload.`);
-        else setListNote(d.error || "Could not save");
+        if (saveMode === "new" && !newListName.trim()) { setSavingList(false); return; }
+        if (saveMode === "existing" && !existingListId) { setSavingList(false); return; }
+        const CHUNK = 40;
+        let listId = saveMode === "existing" ? existingListId : "";
+        let listName = "", listCount = 0, totalSaved = 0, totalCredits = 0, failed = "";
+        setShowSaveList(false);
+        for (let i = 0; i < chosen.length; i += CHUNK) {
+          const batch = chosen.slice(i, i + CHUNK);
+          const payload: Record<string, unknown> = { prospects: batch };
+          if (listId) payload.listId = listId; else payload.listName = newListName.trim();
+          setListNote(`Saving ${Math.min(i + batch.length, chosen.length)} / ${chosen.length}… revealing emails (1 Apollo credit each).`);
+          const r = await fetch("/api/apollo/save", {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+          }).then((res) => res.json()).catch(() => null);
+          if (!r || !r.list) { failed = (r && r.error) || "save failed (timeout/network)"; break; }
+          listId = r.list.id; listName = r.list.name; listCount = r.list.count;
+          totalSaved += r.saved || 0; totalCredits += r.creditsUsed || 0;
+        }
+        if (failed) setListNote(`Stopped: ${failed}. Saved ${totalSaved} so far${listName ? ` to "${listName}"` : ""}. You can re-run to continue.`);
+        else setListNote(`Revealed ${totalCredits} emails (Apollo credits) · saved ${totalSaved} to "${listName}" (${listCount} total). Open it in Lists & Upload.`);
+        setSavingList(false);
+        return;
       } else if (saveMode === "new") {
         if (!newListName.trim()) { setSavingList(false); return; }
         d = await fetch("/api/lists", {

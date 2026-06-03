@@ -183,9 +183,8 @@ export async function enrichPeople(
     }
   }
 
-  const CONCURRENCY = 5;
-  for (let i = 0; i < chunks.length; i += CONCURRENCY) {
-    await Promise.all(chunks.slice(i, i + CONCURRENCY).map(runChunk));
-  }
+  // Sequential — Apollo rate-limits bursts of bulk_match calls. Large saves are
+  // kept fast/safe by chunking on the client (each request reveals a small batch).
+  for (const c of chunks) await runChunk(c);
   return out;
 }
