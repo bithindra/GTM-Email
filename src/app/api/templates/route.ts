@@ -13,7 +13,8 @@ export async function POST(req: NextRequest) {
   if (!b.name || !b.subject || !b.body) {
     return NextResponse.json({ error: "name, subject and body are required" }, { status: 400 });
   }
-  const t = await getStore().saveTemplate({ id: b.id, name: b.name, subject: b.subject, body: b.body });
+  const type = b.type === "newsletter" ? "newsletter" : "outreach";
+  const t = await getStore().saveTemplate({ id: b.id, name: b.name, subject: b.subject, body: b.body, type });
   return NextResponse.json({ template: t });
 }
 

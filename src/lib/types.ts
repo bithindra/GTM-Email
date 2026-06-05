@@ -24,6 +24,9 @@ export type Template = {
   subject: string;
   body: string; // supports {{first_name}}, {{company}}, {{title}}, {{city}}, {{country}}
   updatedAt: string;
+  // "outreach" = 1:1 cold-email styling (default). "newsletter" = broadcast/company
+  // update rendered in a styled shell, personalized by name only.
+  type?: "outreach" | "newsletter";
 };
 
 export type RecipientStatus =

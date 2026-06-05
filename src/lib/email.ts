@@ -31,30 +31,66 @@ export function renderTemplate(text: string, data: MergeData): string {
   return text.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k: string) => (data as Record<string, string>)[k] ?? `{{${k}}}`);
 }
 
-// Convert plain-text body to HTML, rewrite links through the click tracker,
-// and append a 1x1 open-tracking pixel.
-export function buildHtml(bodyText: string, recipientId: string): string {
-  const base = appUrl();
-  const escaped = bodyText
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
 
-  // Linkify URLs (http(s):// and www./bare domains) and route them through the
-  // click tracker so clicks are captured. Skips anything that's part of an email address.
-  const linked = escaped.replace(
+// Linkify URLs and route them through the click tracker. Input must be escaped.
+function linkifyTracked(escaped: string, recipientId: string): string {
+  const base = appUrl();
+  return escaped.replace(
     /(^|[\s(>])((?:https?:\/\/|www\.)[^\s<)]+|[a-z0-9.-]+\.(?:com|co|io|ai|in|org|net|co\.in|us|dev)(?:\/[^\s<)]*)?)/gi,
     (m, pre: string, raw: string) => {
-      // don't linkify email addresses (preceding char is @ handled by \s gate; also skip if looks like local@domain)
       const href = raw.startsWith("http") ? raw : `https://${raw.replace(/^www\./, "www.")}`;
       const tracked = `${base}/api/track/click/${recipientId}?url=${encodeURIComponent(href)}`;
       return `${pre}<a href="${tracked}" style="color:#4f46e5">${raw}</a>`;
     },
   );
+}
 
-  const html = linked.replace(/\n/g, "<br/>");
-  const pixel = `<img src="${base}/api/track/open/${recipientId}" width="1" height="1" alt="" style="display:none"/>`;
-  return `<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.6;color:#0f172a">${html}${pixel}</div>`;
+function openPixel(recipientId: string): string {
+  return `<img src="${appUrl()}/api/track/open/${recipientId}" width="1" height="1" alt="" style="display:none"/>`;
+}
+
+// Sender's display name (from EMAIL_FROM "Name <addr>") for the newsletter header.
+function brandName(): string {
+  const disp = (process.env.EMAIL_FROM || "").replace(/<[^>]*>/, "").replace(/["']/g, "").trim();
+  return disp || "Our Team";
+}
+
+// Convert plain-text body to HTML, rewrite links through the click tracker,
+// and append a 1x1 open-tracking pixel. (1:1 outreach styling.)
+export function buildHtml(bodyText: string, recipientId: string): string {
+  const html = linkifyTracked(escapeHtml(bodyText), recipientId).replace(/\n/g, "<br/>");
+  return `<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.6;color:#0f172a">${html}${openPixel(recipientId)}</div>`;
+}
+
+// Broadcast / company-update styling: a clean, branded newsletter shell. The body
+// is still plain text (blank line = new paragraph) so it stays easy to edit, but
+// it renders inside a polished card with header + footer.
+export function buildNewsletterHtml(bodyText: string, recipientId: string): string {
+  const brand = brandName();
+  const paras = bodyText
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean)
+    .map((block) => `<p style="margin:0 0 16px 0">${linkifyTracked(escapeHtml(block), recipientId).replace(/\n/g, "<br/>")}</p>`)
+    .join("");
+  return (
+    `<div style="background:#f1f5f9;padding:24px 12px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">` +
+      `<div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e2e8f0">` +
+        `<div style="background:#4f46e5;padding:18px 28px"><span style="color:#ffffff;font-size:17px;font-weight:700;letter-spacing:.2px">${escapeHtml(brand)}</span></div>` +
+        `<div style="padding:28px;font-size:15px;line-height:1.7;color:#0f172a">${paras}</div>` +
+        `<div style="padding:16px 28px;border-top:1px solid #eef2f7;color:#94a3b8;font-size:12px;line-height:1.5">You're receiving this update from ${escapeHtml(brand)}. Just reply to this email to reach us.</div>` +
+      `</div>` +
+      openPixel(recipientId) +
+    `</div>`
+  );
+}
+
+// Pick the renderer based on the template type.
+export function renderBodyHtml(type: Template["type"], bodyText: string, recipientId: string): string {
+  return type === "newsletter" ? buildNewsletterHtml(bodyText, recipientId) : buildHtml(bodyText, recipientId);
 }
 
 export type SendResult = { ok: boolean; simulated: boolean; id?: string; error?: string };
@@ -116,7 +152,7 @@ export async function sendEmail(opts: {
 export function previewFor(template: Template, sample: MergeData, recipientId = "preview") {
   const subject = renderTemplate(template.subject, sample);
   const bodyText = renderTemplate(template.body, sample);
-  return { subject, bodyText, html: buildHtml(bodyText, recipientId) };
+  return { subject, bodyText, html: renderBodyHtml(template.type, bodyText, recipientId) };
 }
 
 export const SAMPLE_MERGE: MergeData = {

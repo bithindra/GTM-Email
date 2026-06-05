@@ -175,10 +175,11 @@ class MemoryStore implements Store {
       existing.name = t.name;
       existing.subject = t.subject;
       existing.body = t.body;
+      existing.type = t.type || "outreach";
       existing.updatedAt = new Date().toISOString();
       return existing;
     }
-    const created: Template = { id: t.id || uuid(), name: t.name, subject: t.subject, body: t.body, updatedAt: new Date().toISOString() };
+    const created: Template = { id: t.id || uuid(), name: t.name, subject: t.subject, body: t.body, type: t.type || "outreach", updatedAt: new Date().toISOString() };
     this.templates.push(created);
     return created;
   }
@@ -367,6 +368,7 @@ class PgStore implements Store {
       email_status text, created_at timestamptz DEFAULT now())`;
     await sql`CREATE TABLE IF NOT EXISTS templates (
       id text PRIMARY KEY, name text, subject text, body text, updated_at timestamptz DEFAULT now())`;
+    await sql`ALTER TABLE templates ADD COLUMN IF NOT EXISTS type text DEFAULT 'outreach'`;
     await sql`CREATE TABLE IF NOT EXISTS campaigns (
       id text PRIMARY KEY, name text, template_id text, status text, created_at timestamptz DEFAULT now())`;
     await sql`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS followup_template_id text`;
@@ -468,25 +470,26 @@ class PgStore implements Store {
   async getTemplates() {
     const sql = await this.db();
     const rows = await sql`SELECT * FROM templates ORDER BY updated_at DESC`;
-    return rows.map((r) => ({ id: r.id, name: r.name, subject: r.subject, body: r.body, updatedAt: new Date(r.updated_at).toISOString() })) as Template[];
+    return rows.map((r) => ({ id: r.id, name: r.name, subject: r.subject, body: r.body, type: (r.type as Template["type"]) || "outreach", updatedAt: new Date(r.updated_at).toISOString() })) as Template[];
   }
   async getTemplate(id: string) {
     const sql = await this.db();
     const rows = await sql`SELECT * FROM templates WHERE id=${id}`;
     if (!rows.length) return null;
     const r = rows[0];
-    return { id: r.id, name: r.name, subject: r.subject, body: r.body, updatedAt: new Date(r.updated_at).toISOString() } as Template;
+    return { id: r.id, name: r.name, subject: r.subject, body: r.body, type: (r.type as Template["type"]) || "outreach", updatedAt: new Date(r.updated_at).toISOString() } as Template;
   }
   async saveTemplate(t: Omit<Template, "updatedAt"> & { id?: string }) {
     const sql = await this.db();
+    const type = t.type || "outreach";
     if (t.id) {
-      const upd = await sql`UPDATE templates SET name=${t.name}, subject=${t.subject}, body=${t.body}, updated_at=now() WHERE id=${t.id} RETURNING *`;
-      if (upd.length) { const r = upd[0]; return { id: r.id, name: r.name, subject: r.subject, body: r.body, updatedAt: new Date(r.updated_at).toISOString() } as Template; }
+      const upd = await sql`UPDATE templates SET name=${t.name}, subject=${t.subject}, body=${t.body}, type=${type}, updated_at=now() WHERE id=${t.id} RETURNING *`;
+      if (upd.length) { const r = upd[0]; return { id: r.id, name: r.name, subject: r.subject, body: r.body, type: (r.type as Template["type"]) || "outreach", updatedAt: new Date(r.updated_at).toISOString() } as Template; }
     }
     const id = t.id || uuid();
-    const ins = await sql`INSERT INTO templates (id,name,subject,body,updated_at) VALUES (${id},${t.name},${t.subject},${t.body},now()) RETURNING *`;
+    const ins = await sql`INSERT INTO templates (id,name,subject,body,type,updated_at) VALUES (${id},${t.name},${t.subject},${t.body},${type},now()) RETURNING *`;
     const r = ins[0];
-    return { id: r.id, name: r.name, subject: r.subject, body: r.body, updatedAt: new Date(r.updated_at).toISOString() } as Template;
+    return { id: r.id, name: r.name, subject: r.subject, body: r.body, type: (r.type as Template["type"]) || "outreach", updatedAt: new Date(r.updated_at).toISOString() } as Template;
   }
   async deleteTemplate(id: string) {
     const sql = await this.db();

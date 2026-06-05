@@ -1,6 +1,6 @@
 import { v4 as uuid } from "uuid";
 import { getStore, type Store } from "./db";
-import { buildHtml, mergeDataFromProspect, renderTemplate, sendEmail } from "./email";
+import { renderBodyHtml, mergeDataFromProspect, renderTemplate, sendEmail } from "./email";
 import { searchProspects, enrichPeople } from "./apollo";
 import { scanInbox } from "./inbox";
 import type { Prospect } from "./types";
@@ -101,7 +101,7 @@ export async function sendCampaignQueued(
     const p = pIndex.get(r.prospectId);
     const data = mergeDataFromProspect(p ?? { name: r.name, company: r.company, title: "", city: "", country: "" });
     const subject = renderTemplate(template.subject, data);
-    const html = buildHtml(renderTemplate(template.body, data), r.id);
+    const html = renderBodyHtml(template.type, renderTemplate(template.body, data), r.id);
     const res = await sendEmail({ to: r.email, subject, html, attachments: campaign.attachments });
     if (res.ok) {
       stats.simulated = stats.simulated || res.simulated;
@@ -138,7 +138,7 @@ export async function processFollowups(
     if (!tmpl) continue;
     const p = pIndex.get(recipient.prospectId);
     const data = mergeDataFromProspect(p ?? { name: recipient.name, company: recipient.company, title: "", city: "", country: "" });
-    const html = buildHtml(renderTemplate(tmpl.body, data), recipient.id);
+    const html = renderBodyHtml(tmpl.type, renderTemplate(tmpl.body, data), recipient.id);
     const res = await sendEmail({ to: recipient.email, subject: renderTemplate(tmpl.subject, data), html, attachments: campaign.attachments });
     if (res.ok) {
       stats.simulated = stats.simulated || res.simulated;
