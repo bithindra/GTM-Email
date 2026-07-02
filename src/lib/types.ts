@@ -25,8 +25,15 @@ export type Template = {
   body: string; // supports {{first_name}}, {{company}}, {{title}}, {{city}}, {{country}}
   updatedAt: string;
   // "outreach" = 1:1 cold-email styling (default). "newsletter" = broadcast/company
-  // update rendered in a styled shell, personalized by name only.
+  // update rendered in a styled shell, personalized by name only. (Legacy — `format`
+  // is the source of truth when set.)
   type?: "outreach" | "newsletter";
+  // Render format: "plain" (looks hand-typed, most human/inboxing), "rich" (light
+  // 1:1 styling), "newsletter" (branded card). Bodies support {a|b} spintax.
+  format?: "plain" | "rich" | "newsletter";
+  // Open-pixel + click tracking. Off = no tracking domain/pixel (more human, better
+  // inboxing). Defaults: on for rich/newsletter, off for plain.
+  track?: boolean;
 };
 
 export type RecipientStatus =
@@ -53,6 +60,7 @@ export type Recipient = {
   clickedAt: string | null;
   repliedAt: string | null;
   followupSentAt: string | null;
+  followup2SentAt: string | null;
   opens: number;
   clicks: number;
 };
@@ -69,11 +77,14 @@ export type Campaign = {
   templateId: string;
   followupTemplateId: string | null; // second mailer
   followupDays: number; // days after first send to trigger follow-up
+  followup2TemplateId: string | null; // third mailer ("breakup"), sent after the first follow-up
+  followup2Days: number; // days after the FIRST follow-up to trigger the second
   status: "draft" | "scheduled" | "sending" | "sent";
   scheduledAt: string | null; // ISO; when set + status scheduled, dispatcher sends at/after this time
   createdAt: string;
   recipientCount: number;
   attachments: Attachment[]; // files sent with every mail in this campaign (incl. follow-ups)
+  fromMailbox: string | null; // sending Gmail address (mailbox id); null = primary mailbox
 };
 
 export type List = {

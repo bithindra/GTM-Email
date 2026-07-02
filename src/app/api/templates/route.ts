@@ -13,8 +13,13 @@ export async function POST(req: NextRequest) {
   if (!b.name || !b.subject || !b.body) {
     return NextResponse.json({ error: "name, subject and body are required" }, { status: 400 });
   }
-  const type = b.type === "newsletter" ? "newsletter" : "outreach";
-  const t = await getStore().saveTemplate({ id: b.id, name: b.name, subject: b.subject, body: b.body, type });
+  const format: "plain" | "rich" | "newsletter" =
+    b.format === "plain" || b.format === "rich" || b.format === "newsletter"
+      ? b.format
+      : b.type === "newsletter" ? "newsletter" : "rich";
+  const type = format === "newsletter" ? "newsletter" : "outreach";
+  const track = typeof b.track === "boolean" ? b.track : format !== "plain";
+  const t = await getStore().saveTemplate({ id: b.id, name: b.name, subject: b.subject, body: b.body, type, format, track });
   return NextResponse.json({ template: t });
 }
 

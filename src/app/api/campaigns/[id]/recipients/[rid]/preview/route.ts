@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStore } from "@/lib/db";
-import { mergeDataFromProspect, renderTemplate } from "@/lib/email";
+import { mergeDataFromProspect, renderTemplate, spin } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +24,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   return NextResponse.json({
     to: recipient.email,
     name: recipient.name,
-    first: first ? { subject: renderTemplate(first.subject, data), body: renderTemplate(first.body, data) } : null,
-    followup: followupTmpl ? { subject: renderTemplate(followupTmpl.subject, data), body: renderTemplate(followupTmpl.body, data), days: campaign.followupDays } : null,
+    first: first ? { subject: renderTemplate(spin(first.subject, rid), data), body: renderTemplate(spin(first.body, rid), data) } : null,
+    followup: followupTmpl ? { subject: renderTemplate(spin(followupTmpl.subject, rid), data), body: renderTemplate(spin(followupTmpl.body, rid), data), days: campaign.followupDays } : null,
   });
 }

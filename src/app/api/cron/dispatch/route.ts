@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { runDispatch } from "@/lib/sender";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 300; // paced sends need room; loop self-limits via DISPATCH_TIME_BUDGET_MS
 
 function authorized(req: NextRequest): boolean {
   const cronSecret = process.env.CRON_SECRET;

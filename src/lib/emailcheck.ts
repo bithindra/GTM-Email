@@ -30,6 +30,18 @@ export function syntaxValid(email: string): boolean {
 }
 
 /**
+ * Validate a single address right before sending: syntax + live MX (cached per
+ * domain). Returns "valid" only when both pass — used as the pre-send gate so we
+ * never attempt delivery to a bad address (protects sender bounce rate).
+ */
+export async function validateAddress(email: string): Promise<EmailVerdict> {
+  const e = (email || "").trim();
+  if (!syntaxValid(e)) return "invalid_syntax";
+  const domain = e.split("@")[1].toLowerCase();
+  return (await domainHasMx(domain)) ? "valid" : "no_mx";
+}
+
+/**
  * Validate a batch of emails. Syntax is checked for all; MX is checked once per
  * unique domain (cached) up to `mxLimit` domains to bound latency. Returns a
  * verdict per email plus a summary.

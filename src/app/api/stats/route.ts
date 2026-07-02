@@ -5,39 +5,17 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   const store = getStore();
-  const recipients = await store.allRecipients();
-  const campaigns = await store.getCampaigns();
-
+  // All counts come from SQL aggregates — no full-table row dumps (Neon transfer).
+  const s = await store.statsSummary();
+  const campaignPerformance = await store.campaignPerformance();
   const sentToday = await store.sentTodayCount();
+  const campaigns = await store.getCampaigns(); // cheap now (attachments excluded) — for the scheduled list
   const dailyLimit = Number(process.env.SEND_DAILY_LIMIT || 400);
   const scheduled = campaigns.filter((c) => c.status === "scheduled");
 
-  // Per-campaign performance
-  const campaignPerformance = campaigns.map((c) => {
-    const rs = recipients.filter((r) => r.campaignId === c.id);
-    return {
-      id: c.id,
-      name: c.name,
-      status: c.status,
-      recipients: rs.length || c.recipientCount,
-      sent: rs.filter((r) => r.sentAt).length,
-      delivered: rs.filter((r) => r.deliveredAt).length,
-      opened: rs.filter((r) => r.openedAt).length,
-      clicked: rs.filter((r) => r.clickedAt).length,
-      replied: rs.filter((r) => r.repliedAt).length,
-    };
-  });
-
-  const sent = recipients.filter((r) => r.sentAt).length;
-  const delivered = recipients.filter((r) => r.deliveredAt).length;
-  const opened = recipients.filter((r) => r.openedAt).length;
-  const clicked = recipients.filter((r) => r.clickedAt).length;
-  const replied = recipients.filter((r) => r.repliedAt).length;
-  const bounced = recipients.filter((r) => r.status === "bounced").length;
-
+  const { sent, delivered, opened, clicked, replied, bounced } = s;
   const pct = (n: number, d: number) => (d ? Math.round((n / d) * 1000) / 10 : 0);
 
-  // Funnel for the bar chart
   const funnel = [
     { stage: "Sent", value: sent },
     { stage: "Delivered", value: delivered },
@@ -47,16 +25,7 @@ export async function GET() {
   ];
 
   return NextResponse.json({
-    totals: {
-      prospects: (await store.listProspects()).length,
-      campaigns: campaigns.length,
-      sent,
-      delivered,
-      opened,
-      clicked,
-      replied,
-      bounced,
-    },
+    totals: { prospects: s.prospects, campaigns: campaignPerformance.length, sent, delivered, opened, clicked, replied, bounced },
     rates: {
       deliveryRate: pct(delivered, sent),
       openRate: pct(opened, delivered),

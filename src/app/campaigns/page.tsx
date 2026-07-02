@@ -20,13 +20,9 @@ export default function CampaignsPage() {
   const [showNew, setShowNew] = useState(false);
 
   useEffect(() => {
-    // Load the list immediately — never gate it behind the dispatcher tick
-    // (AutoDispatch in the layout fires the tick in the background). Re-fetch
-    // once shortly after so any just-dispatched status changes show up.
-    const load = () => fetch("/api/campaigns").then((r) => r.json()).then((d) => setCampaigns(d.campaigns ?? [])).catch(() => {});
-    load();
-    const t = setTimeout(load, 4000);
-    return () => clearTimeout(t);
+    // Load the list once. The dispatcher tick runs separately via AutoDispatch; use
+    // a page refresh to see status changes (avoids extra Neon-transfer round-trips).
+    fetch("/api/campaigns").then((r) => r.json()).then((d) => setCampaigns(d.campaigns ?? [])).catch(() => {});
   }, []);
 
   return (

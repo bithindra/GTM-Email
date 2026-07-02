@@ -3,6 +3,7 @@ import { getStore } from "@/lib/db";
 import { sendCampaignQueued, dailyLimit } from "@/lib/sender";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 300; // paced sends need room; loop self-limits via DISPATCH_TIME_BUDGET_MS
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

@@ -58,6 +58,9 @@ export async function POST(req: NextRequest) {
     typeof b.followupDays === "number" ? b.followupDays : 7,
     scheduledAt,
     attachments,
+    b.followup2TemplateId || null,
+    typeof b.followup2Days === "number" ? b.followup2Days : 7,
+    typeof b.fromMailbox === "string" && b.fromMailbox ? b.fromMailbox : null,
   );
   return NextResponse.json({ campaign: c });
 }

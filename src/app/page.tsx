@@ -16,20 +16,19 @@ type Stats = {
 
 const FUNNEL_COLORS = ["#6366f1", "#3b82f6", "#f59e0b", "#06b6d4", "#10b981"];
 
+type Health = { db: boolean; mailboxes: number; sendWindowOpen: boolean; sentToday: number; dailyLimit: number };
+
 export default function Dashboard() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [campaigns, setCampaigns] = useState<{ id: string; name: string; status: string; recipientCount: number; createdAt: string }[]>([]);
+  const [health, setHealth] = useState<Health | null>(null);
 
   useEffect(() => {
     // Load dashboard data immediately. The dispatcher tick runs separately via
     // AutoDispatch (in the layout), so the UI never waits on the ~3.5s tick.
-    const load = () => {
-      fetch("/api/stats").then((r) => r.json()).then(setStats).catch(() => {});
-      fetch("/api/campaigns").then((r) => r.json()).then((d) => setCampaigns(d.campaigns ?? [])).catch(() => {});
-    };
-    load();
-    const t = setTimeout(load, 4000);
-    return () => clearTimeout(t);
+    fetch("/api/stats").then((r) => r.json()).then(setStats).catch(() => {});
+    fetch("/api/campaigns").then((r) => r.json()).then((d) => setCampaigns(d.campaigns ?? [])).catch(() => {});
+    fetch("/api/health").then((r) => r.json()).then(setHealth).catch(() => {});
   }, []);
 
   const t = stats?.totals;
@@ -53,6 +52,23 @@ export default function Dashboard() {
         </div>
         <Link href="/prospects" className="btn btn-primary">Find founders <ArrowRight className="w-4 h-4" /></Link>
       </div>
+
+      {/* Platform health strip */}
+      {health && (
+        <div className="flex flex-wrap items-center gap-2 mb-6 text-xs">
+          {[
+            { ok: health.db, label: health.db ? "Database connected" : "Database error" },
+            { ok: health.mailboxes > 0, label: `${health.mailboxes} sending mailbox${health.mailboxes === 1 ? "" : "es"}` },
+            { ok: health.sendWindowOpen, label: health.sendWindowOpen ? "Send window open" : "Send window closed (auto-sends paused)" },
+            { ok: health.sentToday < health.dailyLimit, label: `${health.sentToday}/${health.dailyLimit} sent today` },
+          ].map((p, i) => (
+            <span key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border-soft bg-white">
+              <span className={`w-1.5 h-1.5 rounded-full ${p.ok ? "bg-emerald-500" : "bg-amber-500"}`} />
+              {p.label}
+            </span>
+          ))}
+        </div>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
         {cards.map((c) => {

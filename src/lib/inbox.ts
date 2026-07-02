@@ -10,12 +10,12 @@ export async function scanInbox(store: Store): Promise<{ enabled: boolean; scann
   const pass = process.env.SMTP_PASS;
   if (!user || !pass) return { enabled: false, scanned: 0, replies: 0, bounces: 0 };
 
-  // Build lookup of our recipients by email (only those already sent, not yet replied/bounced).
-  const recipients = await store.allRecipients();
+  // Lean lookup: only id/email for recipients already sent and not yet replied/bounced
+  // (avoids pulling every recipient row, all columns, on every dispatch tick).
+  const recipients = await store.recipientsToReconcile();
   const byEmail = new Map<string, string[]>();
   for (const r of recipients) {
-    if (!r.email || !r.sentAt) continue;
-    if (r.status === "replied" || r.status === "bounced") continue;
+    if (!r.email) continue;
     const k = r.email.toLowerCase();
     byEmail.set(k, [...(byEmail.get(k) ?? []), r.id]);
   }
@@ -46,6 +46,11 @@ export async function scanInbox(store: Store): Promise<{ enabled: boolean; scann
 
         // Reply: sender is one of our recipients
         if (byEmail.has(from)) {
+          // mailto: List-Unsubscribe lands here as a reply with an "unsubscribe" subject.
+          // Honor any opt-out intent globally, then record the reply.
+          if (/unsubscribe|remove me|opt[\s-]?out|stop emailing/i.test(subject)) {
+            await store.suppress(from, "unsubscribe-reply");
+          }
           for (const id of byEmail.get(from)!) { await store.recordEvent(id, "replied"); replies++; }
           continue;
         }

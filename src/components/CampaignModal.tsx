@@ -31,10 +31,14 @@ export default function CampaignModal({
 }) {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [lists, setLists] = useState<List[]>([]);
+  const [mailboxes, setMailboxes] = useState<{ id: string; label: string }[]>([]);
+  const [fromMailbox, setFromMailbox] = useState("");
   const [name, setName] = useState(defaultName || "");
   const [templateId, setTemplateId] = useState("");
   const [followupTemplateId, setFollowupTemplateId] = useState("");
   const [followupDays, setFollowupDays] = useState(7);
+  const [followup2TemplateId, setFollowup2TemplateId] = useState("");
+  const [followup2Days, setFollowup2Days] = useState(7);
   const [pickedListIds, setPickedListIds] = useState<Set<string>>(new Set());
   const [when, setWhen] = useState<"now" | "schedule">("now");
   const [scheduledAt, setScheduledAt] = useState("");
@@ -52,6 +56,11 @@ export default function CampaignModal({
     fetch("/api/templates").then((r) => r.json()).then((d) => {
       setTemplates(d.templates ?? []);
       if (d.templates?.[0]) setTemplateId((prev) => prev || d.templates[0].id);
+    });
+    fetch("/api/mailboxes").then((r) => r.json()).then((d) => {
+      const boxes = d.mailboxes ?? [];
+      setMailboxes(boxes);
+      setFromMailbox(boxes[0]?.id ?? "");
     });
     if (needsListPicker) {
       fetch("/api/lists").then((r) => r.json()).then((d) => setLists(d.lists ?? []));
@@ -101,6 +110,17 @@ export default function CampaignModal({
     return lists.filter((l) => pickedListIds.has(l.id)).reduce((s, l) => s + l.count, 0);
   }, [target, count, lists, pickedListIds]);
 
+  // Rough plan: how long these will take to fully go out given a ~200/day Gmail-safe
+  // pace. Purely informational so the user sets realistic expectations.
+  const planNote = useMemo(() => {
+    const n = resolvedCount;
+    if (!n) return "";
+    const perDay = 200;
+    if (n <= perDay) return `≈ ${n} email${n > 1 ? "s" : ""} — should clear in one sending window.`;
+    const days = Math.ceil(n / perDay);
+    return `≈ ${n} emails — drips over ~${days} days at a safe ${perDay}/day pace. The rest stays queued and auto-continues.`;
+  }, [resolvedCount]);
+
   if (!open) return null;
 
   async function create() {
@@ -114,7 +134,9 @@ export default function CampaignModal({
     try {
       const tgt: Target = target ?? { listIds: [...pickedListIds] };
       const body: Record<string, unknown> = {
-        name, templateId, followupTemplateId: followupTemplateId || null, followupDays, ...tgt,
+        name, templateId, followupTemplateId: followupTemplateId || null, followupDays,
+        followup2TemplateId: (followupTemplateId && followup2TemplateId) || null, followup2Days,
+        fromMailbox: fromMailbox || null, ...tgt,
         attachments: attachments.map((a) => ({ filename: a.filename, contentType: a.contentType, content: a.content })),
       };
       if (when === "schedule") body.scheduledAt = new Date(scheduledAt).toISOString();
@@ -140,7 +162,8 @@ export default function CampaignModal({
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={onClose}>
       <div className="card p-6 w-full max-w-md max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <h3 className="font-bold text-lg mb-1">New campaign</h3>
-        <p className="text-sm text-muted mb-4">{resolvedCount} recipients</p>
+        <p className="text-sm text-muted mb-1">{resolvedCount} recipients</p>
+        {planNote && <p className="text-xs text-indigo-600 mb-4">{planNote}</p>}
 
         <label className="text-sm font-semibold block mb-1">Campaign name</label>
         <input className="input mb-4" value={name} onChange={(e) => setName(e.target.value)} />
@@ -164,6 +187,15 @@ export default function CampaignModal({
           </>
         )}
 
+        {mailboxes.length > 0 && (
+          <>
+            <label className="text-sm font-semibold block mb-1">Send from</label>
+            <select className="select mb-4" value={fromMailbox} onChange={(e) => setFromMailbox(e.target.value)}>
+              {mailboxes.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+            </select>
+          </>
+        )}
+
         <label className="text-sm font-semibold block mb-1">Mail to send</label>
         <select className="select mb-4" value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
           {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
@@ -184,6 +216,26 @@ export default function CampaignModal({
             <span className="text-sm text-muted">days</span>
           </div>
         </div>
+
+        {followupTemplateId && (
+          <>
+            <label className="text-sm font-semibold block mb-1">
+              Second follow-up <span className="text-muted font-normal">(optional &ldquo;breakup&rdquo; mail, after the first follow-up)</span>
+            </label>
+            <div className="flex gap-2 mb-4">
+              <select className="select" value={followup2TemplateId} onChange={(e) => setFollowup2TemplateId(e.target.value)}>
+                <option value="">— No second follow-up —</option>
+                {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+              <div className="flex items-center gap-1 shrink-0">
+                <span className="text-sm text-muted">after</span>
+                <input type="number" min={1} max={60} className="input w-16 text-center" value={followup2Days}
+                  onChange={(e) => setFollowup2Days(Number(e.target.value) || 7)} disabled={!followup2TemplateId} />
+                <span className="text-sm text-muted">days</span>
+              </div>
+            </div>
+          </>
+        )}
 
         <label className="text-sm font-semibold block mb-1">
           Attachments <span className="text-muted font-normal">(optional, sent with every mail)</span>

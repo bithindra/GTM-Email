@@ -6,13 +6,13 @@ name: GTM Flow dispatcher
 # trigger. It hits the public /api/dispatch/tick endpoint (no secret needed);
 # the endpoint only sends work that is already due and stays under the daily cap.
 #
-# Runs every 30 min as a safety margin — GitHub's scheduler can be delayed a few
-# minutes under load, so two attempts per hour guarantee delivery lands within
-# the hour block of any scheduled time.
+# Runs every 30 min, but ONLY during the send window (≈09:00–20:30 IST = 03:30–15:00
+# UTC). Outside those hours the dispatcher holds all sends anyway (withinSendWindow),
+# so round-the-clock ticks would only burn Neon network-transfer for nothing.
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "*/30 3-15 * * *"
   workflow_dispatch: {}
 
 jobs:

@@ -12,13 +12,15 @@ export interface Store {
   listProspects(): Promise<Prospect[]>;
   saveProspects(p: Prospect[]): Promise<Prospect[]>;
   getProspectIdsByEmails(emails: string[]): Promise<Map<string, string>>; // lowercased email -> id
+  getProspectsByIds(ids: string[]): Promise<Prospect[]>;
   getTemplates(): Promise<Template[]>;
   getTemplate(id: string): Promise<Template | null>;
   saveTemplate(t: Omit<Template, "updatedAt"> & { id?: string }): Promise<Template>;
   deleteTemplate(id: string): Promise<void>;
-  getCampaigns(): Promise<Campaign[]>;
-  getCampaign(id: string): Promise<Campaign | null>;
-  createCampaign(name: string, templateId: string, prospectIds: string[], followupTemplateId?: string | null, followupDays?: number, scheduledAt?: string | null, attachments?: Attachment[]): Promise<Campaign>;
+  getCampaigns(): Promise<Campaign[]>; // attachments omitted (returned as []) to keep payloads small
+  getCampaign(id: string): Promise<Campaign | null>; // attachments omitted — fetch via getCampaignAttachments
+  getCampaignAttachments(id: string): Promise<Attachment[]>; // loads the base64 blobs only when sending
+  createCampaign(name: string, templateId: string, prospectIds: string[], followupTemplateId?: string | null, followupDays?: number, scheduledAt?: string | null, attachments?: Attachment[], followup2TemplateId?: string | null, followup2Days?: number, fromMailbox?: string | null): Promise<Campaign>;
   setCampaignStatus(id: string, status: Campaign["status"]): Promise<void>;
   deleteCampaign(id: string): Promise<void>;
   dueScheduledCampaigns(): Promise<Campaign[]>;
@@ -26,10 +28,21 @@ export interface Store {
   getRecipient(id: string): Promise<Recipient | null>;
   markSent(recipientId: string): Promise<void>;
   markFollowupSent(recipientId: string): Promise<void>;
+  markFollowup2Sent(recipientId: string): Promise<void>;
+  markFailed(recipientId: string): Promise<void>;
+  bouncedEmails(): Promise<Set<string>>; // lowercased emails that hard-bounced in ANY campaign
+  suppress(email: string, reason: string): Promise<void>; // unsubscribe / complaint — permanent opt-out
+  suppressedEmails(): Promise<Set<string>>; // bounced ∪ unsubscribed — never email these
   deleteRecipients(campaignId: string, ids: string[]): Promise<number>;
+  requeueBounced(campaignId: string): Promise<number>; // bounced → queued (retry after a mailbox-limit misfire)
   recordEvent(recipientId: string, type: "delivered" | "opened" | "clicked" | "replied" | "bounced"): Promise<void>;
   allRecipients(): Promise<Recipient[]>;
+  recipientsToReconcile(): Promise<Pick<Recipient, "id" | "email" | "status" | "sentAt">[]>; // lean rows for the inbox scan
+  statsSummary(): Promise<{ prospects: number; sent: number; delivered: number; opened: number; clicked: number; replied: number; bounced: number }>;
+  campaignPerformance(): Promise<{ id: string; name: string; status: Campaign["status"]; recipientCount: number; recipients: number; sent: number; delivered: number; opened: number; clicked: number; replied: number }[]>;
+  templatePerformance(): Promise<{ id: string; campaigns: number; sent: number; opened: number; clicked: number; replied: number }[]>; // results attributed to the campaign's FIRST mail template
   dueFollowups(): Promise<{ campaign: Campaign; recipient: Recipient }[]>;
+  dueFollowups2(): Promise<{ campaign: Campaign; recipient: Recipient }[]>;
   createList(name: string, prospectIds: string[], source: string): Promise<List>;
   getLists(): Promise<List[]>;
   getList(id: string): Promise<List | null>;
@@ -39,6 +52,7 @@ export interface Store {
   deleteList(id: string): Promise<void>;
   updateProspect(id: string, patch: Partial<Prospect>): Promise<Prospect | null>;
   sentTodayCount(): Promise<number>;
+  sentTodayByMailbox(mailbox: string | null): Promise<number>; // today's sends from one mailbox (warm-up cap)
   createSourcingRequest(filters: SearchFilters): Promise<SourcingRequest>;
   listSourcingRequests(): Promise<SourcingRequest[]>;
   getSourcingRequest(id: string): Promise<SourcingRequest | null>;
@@ -65,6 +79,7 @@ class MemoryStore implements Store {
   sourcingRequests: SourcingRequest[] = [];
   lists: List[] = [];
   listMembers: { listId: string; prospectId: string }[] = [];
+  suppressions = new Set<string>(); // lowercased emails that unsubscribed / complained
 
   constructor() {
     this.seed();
@@ -104,11 +119,14 @@ class MemoryStore implements Store {
       templateId: tmpl.id,
       followupTemplateId: null,
       followupDays: 7,
+      followup2TemplateId: null,
+      followup2Days: 7,
       status: "sent",
       scheduledAt: null,
       createdAt: new Date(now - 1000 * 60 * 60 * 72).toISOString(),
       recipientCount: this.prospects.length,
       attachments: [],
+      fromMailbox: null,
     };
     this.campaigns.push(camp);
 
@@ -134,6 +152,7 @@ class MemoryStore implements Store {
         clickedAt: clicked ? new Date(now - 1000 * 60 * 60 * (55 - i * 2)).toISOString() : null,
         repliedAt: replied ? new Date(now - 1000 * 60 * 60 * (50 - i * 2)).toISOString() : null,
         followupSentAt: null,
+        followup2SentAt: null,
         opens: opened ? Math.floor(Math.random() * 4) + 1 : 0,
         clicks: clicked ? Math.floor(Math.random() * 2) + 1 : 0,
       };
@@ -163,6 +182,10 @@ class MemoryStore implements Store {
     }
     return out;
   }
+  async getProspectsByIds(ids: string[]) {
+    const want = new Set(ids);
+    return this.prospects.filter((p) => want.has(p.id));
+  }
   async getTemplates() {
     return [...this.templates].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
@@ -170,16 +193,21 @@ class MemoryStore implements Store {
     return this.templates.find((t) => t.id === id) ?? null;
   }
   async saveTemplate(t: Omit<Template, "updatedAt"> & { id?: string }) {
+    const format = t.format || (t.type === "newsletter" ? "newsletter" : "rich");
+    const type: Template["type"] = format === "newsletter" ? "newsletter" : "outreach";
+    const track = typeof t.track === "boolean" ? t.track : format !== "plain";
     const existing = t.id ? this.templates.find((x) => x.id === t.id) : null;
     if (existing) {
       existing.name = t.name;
       existing.subject = t.subject;
       existing.body = t.body;
-      existing.type = t.type || "outreach";
+      existing.type = type;
+      existing.format = format;
+      existing.track = track;
       existing.updatedAt = new Date().toISOString();
       return existing;
     }
-    const created: Template = { id: t.id || uuid(), name: t.name, subject: t.subject, body: t.body, type: t.type || "outreach", updatedAt: new Date().toISOString() };
+    const created: Template = { id: t.id || uuid(), name: t.name, subject: t.subject, body: t.body, type, format, track, updatedAt: new Date().toISOString() };
     this.templates.push(created);
     return created;
   }
@@ -187,20 +215,24 @@ class MemoryStore implements Store {
     this.templates = this.templates.filter((t) => t.id !== id);
   }
   async getCampaigns() {
-    return [...this.campaigns].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return [...this.campaigns].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((c) => ({ ...c, attachments: [] }));
   }
   async getCampaign(id: string) {
-    return this.campaigns.find((c) => c.id === id) ?? null;
+    const c = this.campaigns.find((x) => x.id === id);
+    return c ? { ...c, attachments: [] } : null;
   }
-  async createCampaign(name: string, templateId: string, prospectIds: string[], followupTemplateId: string | null = null, followupDays = 7, scheduledAt: string | null = null, attachments: Attachment[] = []) {
-    const camp: Campaign = { id: uuid(), name, templateId, followupTemplateId, followupDays, status: scheduledAt ? "scheduled" : "draft", scheduledAt, createdAt: new Date().toISOString(), recipientCount: prospectIds.length, attachments };
+  async getCampaignAttachments(id: string) {
+    return this.campaigns.find((c) => c.id === id)?.attachments ?? [];
+  }
+  async createCampaign(name: string, templateId: string, prospectIds: string[], followupTemplateId: string | null = null, followupDays = 7, scheduledAt: string | null = null, attachments: Attachment[] = [], followup2TemplateId: string | null = null, followup2Days = 7, fromMailbox: string | null = null) {
+    const camp: Campaign = { id: uuid(), name, templateId, followupTemplateId, followupDays, followup2TemplateId, followup2Days, status: scheduledAt ? "scheduled" : "draft", scheduledAt, createdAt: new Date().toISOString(), recipientCount: prospectIds.length, attachments, fromMailbox };
     this.campaigns.push(camp);
     for (const pid of prospectIds) {
       const p = this.prospects.find((x) => x.id === pid);
       if (!p) continue;
       this.recipients.push({
         id: uuid(), campaignId: camp.id, prospectId: p.id, name: p.name, email: p.email, company: p.company,
-        status: "queued", sentAt: null, deliveredAt: null, openedAt: null, clickedAt: null, repliedAt: null, followupSentAt: null, opens: 0, clicks: 0,
+        status: "queued", sentAt: null, deliveredAt: null, openedAt: null, clickedAt: null, repliedAt: null, followupSentAt: null, followup2SentAt: null, opens: 0, clicks: 0,
       });
     }
     return camp;
@@ -231,6 +263,36 @@ class MemoryStore implements Store {
     const r = this.recipients.find((x) => x.id === recipientId);
     if (r) r.followupSentAt = new Date().toISOString();
   }
+  async markFollowup2Sent(recipientId: string) {
+    const r = this.recipients.find((x) => x.id === recipientId);
+    if (r) r.followup2SentAt = new Date().toISOString();
+  }
+  async markFailed(recipientId: string) {
+    const r = this.recipients.find((x) => x.id === recipientId);
+    if (r) r.status = "failed";
+  }
+  async bouncedEmails() {
+    return new Set(this.recipients.filter((r) => r.status === "bounced").map((r) => (r.email || "").toLowerCase()));
+  }
+  async suppress(email: string, _reason: string) {
+    const e = (email || "").toLowerCase();
+    if (e) this.suppressions.add(e);
+  }
+  async suppressedEmails() {
+    const out = await this.bouncedEmails();
+    for (const e of this.suppressions) out.add(e);
+    return out;
+  }
+  async requeueBounced(campaignId: string) {
+    let n = 0;
+    for (const r of this.recipients) {
+      if (r.campaignId === campaignId && r.status === "bounced") {
+        r.status = "queued"; r.sentAt = null; r.deliveredAt = null; n++;
+      }
+    }
+    if (n) { const c = this.campaigns.find((x) => x.id === campaignId); if (c && c.status === "sent") c.status = "sending"; }
+    return n;
+  }
   async deleteRecipients(campaignId: string, ids: string[]) {
     const set = new Set(ids);
     const before = this.recipients.length;
@@ -247,8 +309,21 @@ class MemoryStore implements Store {
       if (!c.followupTemplateId) continue;
       for (const r of this.recipients.filter((x) => x.campaignId === c.id)) {
         if (r.followupSentAt || !r.sentAt) continue;
-        if (["replied", "bounced", "queued"].includes(r.status)) continue;
+        if (["replied", "bounced", "queued", "failed"].includes(r.status)) continue;
         if (now - new Date(r.sentAt).getTime() >= c.followupDays * 86400000) out.push({ campaign: c, recipient: r });
+      }
+    }
+    return out;
+  }
+  async dueFollowups2() {
+    const out: { campaign: Campaign; recipient: Recipient }[] = [];
+    const now = Date.now();
+    for (const c of this.campaigns) {
+      if (!c.followup2TemplateId) continue;
+      for (const r of this.recipients.filter((x) => x.campaignId === c.id)) {
+        if (r.followup2SentAt || !r.followupSentAt) continue;
+        if (["replied", "bounced", "queued", "failed"].includes(r.status)) continue;
+        if (now - new Date(r.followupSentAt).getTime() >= c.followup2Days * 86400000) out.push({ campaign: c, recipient: r });
       }
     }
     return out;
@@ -267,6 +342,52 @@ class MemoryStore implements Store {
   }
   async allRecipients() {
     return [...this.recipients];
+  }
+  async recipientsToReconcile() {
+    return this.recipients
+      .filter((r) => r.sentAt && r.status !== "replied" && r.status !== "bounced")
+      .map((r) => ({ id: r.id, email: r.email, status: r.status, sentAt: r.sentAt }));
+  }
+  async statsSummary() {
+    const rs = this.recipients;
+    return {
+      prospects: this.prospects.length,
+      sent: rs.filter((r) => r.sentAt).length,
+      delivered: rs.filter((r) => r.deliveredAt).length,
+      opened: rs.filter((r) => r.openedAt).length,
+      clicked: rs.filter((r) => r.clickedAt).length,
+      replied: rs.filter((r) => r.repliedAt).length,
+      bounced: rs.filter((r) => r.status === "bounced").length,
+    };
+  }
+  async campaignPerformance() {
+    return [...this.campaigns].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((c) => {
+      const rs = this.recipients.filter((r) => r.campaignId === c.id);
+      return {
+        id: c.id, name: c.name, status: c.status, recipientCount: c.recipientCount,
+        recipients: rs.length || c.recipientCount,
+        sent: rs.filter((r) => r.sentAt).length,
+        delivered: rs.filter((r) => r.deliveredAt).length,
+        opened: rs.filter((r) => r.openedAt).length,
+        clicked: rs.filter((r) => r.clickedAt).length,
+        replied: rs.filter((r) => r.repliedAt).length,
+      };
+    });
+  }
+  async templatePerformance() {
+    const out = new Map<string, { id: string; campaigns: number; sent: number; opened: number; clicked: number; replied: number }>();
+    for (const c of this.campaigns) {
+      const e = out.get(c.templateId) ?? { id: c.templateId, campaigns: 0, sent: 0, opened: 0, clicked: 0, replied: 0 };
+      e.campaigns++;
+      for (const r of this.recipients.filter((x) => x.campaignId === c.id)) {
+        if (r.sentAt) e.sent++;
+        if (r.openedAt) e.opened++;
+        if (r.clickedAt) e.clicked++;
+        if (r.repliedAt) e.replied++;
+      }
+      out.set(c.templateId, e);
+    }
+    return [...out.values()];
   }
   async createList(name: string, prospectIds: string[], source: string) {
     let list = this.lists.find((l) => l.name === name);
@@ -320,6 +441,17 @@ class MemoryStore implements Store {
     return this.recipients.filter((r) => (r.sentAt && new Date(r.sentAt).toDateString() === today))
       .length + this.recipients.filter((r) => r.followupSentAt && new Date(r.followupSentAt).toDateString() === today).length;
   }
+  async sentTodayByMailbox(mailbox: string | null) {
+    const today = new Date().toDateString();
+    const ids = new Set(this.campaigns.filter((c) => (c.fromMailbox ?? null) === (mailbox ?? null)).map((c) => c.id));
+    let n = 0;
+    for (const r of this.recipients) {
+      if (!ids.has(r.campaignId)) continue;
+      const on = (d: string | null) => d && new Date(d).toDateString() === today;
+      if (on(r.sentAt) || on(r.followupSentAt) || on(r.followup2SentAt)) n++;
+    }
+    return n;
+  }
   async createSourcingRequest(filters: SearchFilters) {
     const req: SourcingRequest = { id: uuid(), filters, status: "pending", note: "", resultListId: null, importedCount: 0, createdAt: new Date().toISOString(), fulfilledAt: null };
     this.sourcingRequests.push(req);
@@ -369,17 +501,23 @@ class PgStore implements Store {
     await sql`CREATE TABLE IF NOT EXISTS templates (
       id text PRIMARY KEY, name text, subject text, body text, updated_at timestamptz DEFAULT now())`;
     await sql`ALTER TABLE templates ADD COLUMN IF NOT EXISTS type text DEFAULT 'outreach'`;
+    await sql`ALTER TABLE templates ADD COLUMN IF NOT EXISTS format text`;
+    await sql`ALTER TABLE templates ADD COLUMN IF NOT EXISTS track boolean`;
     await sql`CREATE TABLE IF NOT EXISTS campaigns (
       id text PRIMARY KEY, name text, template_id text, status text, created_at timestamptz DEFAULT now())`;
     await sql`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS followup_template_id text`;
     await sql`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS followup_days int DEFAULT 7`;
     await sql`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS scheduled_at timestamptz`;
     await sql`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS attachments text`;
+    await sql`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS followup2_template_id text`;
+    await sql`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS followup2_days int DEFAULT 7`;
+    await sql`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS from_mailbox text`;
     await sql`CREATE TABLE IF NOT EXISTS recipients (
       id text PRIMARY KEY, campaign_id text, prospect_id text, name text, email text, company text,
       status text, sent_at timestamptz, delivered_at timestamptz, opened_at timestamptz,
       clicked_at timestamptz, replied_at timestamptz, opens int DEFAULT 0, clicks int DEFAULT 0)`;
     await sql`ALTER TABLE recipients ADD COLUMN IF NOT EXISTS followup_sent_at timestamptz`;
+    await sql`ALTER TABLE recipients ADD COLUMN IF NOT EXISTS followup2_sent_at timestamptz`;
     await sql`CREATE TABLE IF NOT EXISTS sourcing_requests (
       id text PRIMARY KEY, filters text, status text DEFAULT 'pending', note text DEFAULT '',
       result_list_id text, imported_count int DEFAULT 0, created_at timestamptz DEFAULT now(), fulfilled_at timestamptz)`;
@@ -387,6 +525,8 @@ class PgStore implements Store {
       id text PRIMARY KEY, name text UNIQUE, source text, created_at timestamptz DEFAULT now())`;
     await sql`CREATE TABLE IF NOT EXISTS list_members (
       list_id text, prospect_id text, PRIMARY KEY (list_id, prospect_id))`;
+    await sql`CREATE TABLE IF NOT EXISTS suppressions (
+      email text PRIMARY KEY, reason text, created_at timestamptz DEFAULT now())`;
     const t = await sql`SELECT count(*)::int AS n FROM templates`;
     if (t[0].n === 0) {
       await sql`INSERT INTO templates (id, name, subject, body, updated_at)
@@ -411,6 +551,7 @@ class PgStore implements Store {
       status: r.status as RecipientStatus, sentAt: iso(r.sent_at), deliveredAt: iso(r.delivered_at),
       openedAt: iso(r.opened_at), clickedAt: iso(r.clicked_at), repliedAt: iso(r.replied_at),
       followupSentAt: iso(r.followup_sent_at),
+      followup2SentAt: iso(r.followup2_sent_at),
       opens: (r.opens as number) || 0, clicks: (r.clicks as number) || 0,
     };
   }
@@ -419,11 +560,14 @@ class PgStore implements Store {
       id: r.id as string, name: r.name as string, templateId: r.template_id as string,
       followupTemplateId: (r.followup_template_id as string) || null,
       followupDays: (r.followup_days as number) ?? 7,
+      followup2TemplateId: (r.followup2_template_id as string) || null,
+      followup2Days: (r.followup2_days as number) ?? 7,
       status: r.status as Campaign["status"],
       scheduledAt: r.scheduled_at ? new Date(r.scheduled_at as string).toISOString() : null,
       createdAt: new Date(r.created_at as string).toISOString(),
       recipientCount: (r.rc as number) ?? 0,
       attachments: r.attachments ? (JSON.parse(r.attachments as string) as Attachment[]) : [],
+      fromMailbox: (r.from_mailbox as string) || null,
     };
   }
 
@@ -467,52 +611,80 @@ class PgStore implements Store {
     for (const r of rows) out.set((r.email as string || "").toLowerCase(), r.id as string);
     return out;
   }
+  async getProspectsByIds(ids: string[]) {
+    if (!ids.length) return [];
+    const sql = await this.db();
+    const rows = await sql`SELECT * FROM prospects WHERE id = ANY(${ids}::text[])`;
+    return rows.map((r) => this.mapProspect(r));
+  }
+  private mapTemplate(r: Record<string, unknown>): Template {
+    const type = (r.type as Template["type"]) || "outreach";
+    const format = (r.format as Template["format"]) || (type === "newsletter" ? "newsletter" : "rich");
+    return {
+      id: r.id as string, name: r.name as string, subject: r.subject as string, body: r.body as string,
+      type, format,
+      track: typeof r.track === "boolean" ? r.track : format !== "plain",
+      updatedAt: new Date(r.updated_at as string).toISOString(),
+    };
+  }
   async getTemplates() {
     const sql = await this.db();
     const rows = await sql`SELECT * FROM templates ORDER BY updated_at DESC`;
-    return rows.map((r) => ({ id: r.id, name: r.name, subject: r.subject, body: r.body, type: (r.type as Template["type"]) || "outreach", updatedAt: new Date(r.updated_at).toISOString() })) as Template[];
+    return rows.map((r) => this.mapTemplate(r));
   }
   async getTemplate(id: string) {
     const sql = await this.db();
     const rows = await sql`SELECT * FROM templates WHERE id=${id}`;
-    if (!rows.length) return null;
-    const r = rows[0];
-    return { id: r.id, name: r.name, subject: r.subject, body: r.body, type: (r.type as Template["type"]) || "outreach", updatedAt: new Date(r.updated_at).toISOString() } as Template;
+    return rows.length ? this.mapTemplate(rows[0]) : null;
   }
   async saveTemplate(t: Omit<Template, "updatedAt"> & { id?: string }) {
     const sql = await this.db();
-    const type = t.type || "outreach";
+    const format = t.format || (t.type === "newsletter" ? "newsletter" : "rich");
+    const type: Template["type"] = format === "newsletter" ? "newsletter" : "outreach";
+    const track = typeof t.track === "boolean" ? t.track : format !== "plain";
     if (t.id) {
-      const upd = await sql`UPDATE templates SET name=${t.name}, subject=${t.subject}, body=${t.body}, type=${type}, updated_at=now() WHERE id=${t.id} RETURNING *`;
-      if (upd.length) { const r = upd[0]; return { id: r.id, name: r.name, subject: r.subject, body: r.body, type: (r.type as Template["type"]) || "outreach", updatedAt: new Date(r.updated_at).toISOString() } as Template; }
+      const upd = await sql`UPDATE templates SET name=${t.name}, subject=${t.subject}, body=${t.body}, type=${type}, format=${format}, track=${track}, updated_at=now() WHERE id=${t.id} RETURNING *`;
+      if (upd.length) return this.mapTemplate(upd[0]);
     }
     const id = t.id || uuid();
-    const ins = await sql`INSERT INTO templates (id,name,subject,body,type,updated_at) VALUES (${id},${t.name},${t.subject},${t.body},${type},now()) RETURNING *`;
-    const r = ins[0];
-    return { id: r.id, name: r.name, subject: r.subject, body: r.body, type: (r.type as Template["type"]) || "outreach", updatedAt: new Date(r.updated_at).toISOString() } as Template;
+    const ins = await sql`INSERT INTO templates (id,name,subject,body,type,format,track,updated_at) VALUES (${id},${t.name},${t.subject},${t.body},${type},${format},${track},now()) RETURNING *`;
+    return this.mapTemplate(ins[0]);
   }
   async deleteTemplate(id: string) {
     const sql = await this.db();
     await sql`DELETE FROM templates WHERE id=${id}`;
   }
+  // Explicit column list — deliberately EXCLUDES the base64 `attachments` blob so it
+  // isn't shipped on every list/detail/poll/dispatch read (a major Neon-transfer leak).
   async getCampaigns() {
     const sql = await this.db();
-    const rows = await sql`SELECT c.*, (SELECT count(*)::int FROM recipients r WHERE r.campaign_id=c.id) AS rc FROM campaigns c ORDER BY created_at DESC`;
+    const rows = await sql`SELECT c.id, c.name, c.template_id, c.followup_template_id, c.followup_days,
+      c.followup2_template_id, c.followup2_days, c.status, c.scheduled_at, c.from_mailbox, c.created_at,
+      (SELECT count(*)::int FROM recipients r WHERE r.campaign_id=c.id) AS rc
+      FROM campaigns c ORDER BY created_at DESC`;
     return rows.map((r) => this.mapCampaign(r));
   }
   async getCampaign(id: string) {
     const sql = await this.db();
-    const rows = await sql`SELECT c.*, (SELECT count(*)::int FROM recipients r WHERE r.campaign_id=c.id) AS rc FROM campaigns c WHERE c.id=${id}`;
+    const rows = await sql`SELECT c.id, c.name, c.template_id, c.followup_template_id, c.followup_days,
+      c.followup2_template_id, c.followup2_days, c.status, c.scheduled_at, c.from_mailbox, c.created_at,
+      (SELECT count(*)::int FROM recipients r WHERE r.campaign_id=c.id) AS rc
+      FROM campaigns c WHERE c.id=${id}`;
     if (!rows.length) return null;
     return this.mapCampaign(rows[0]);
   }
-  async createCampaign(name: string, templateId: string, prospectIds: string[], followupTemplateId: string | null = null, followupDays = 7, scheduledAt: string | null = null, attachments: Attachment[] = []) {
+  async getCampaignAttachments(id: string) {
+    const sql = await this.db();
+    const rows = await sql`SELECT attachments FROM campaigns WHERE id=${id}`;
+    return rows.length && rows[0].attachments ? (JSON.parse(rows[0].attachments as string) as Attachment[]) : [];
+  }
+  async createCampaign(name: string, templateId: string, prospectIds: string[], followupTemplateId: string | null = null, followupDays = 7, scheduledAt: string | null = null, attachments: Attachment[] = [], followup2TemplateId: string | null = null, followup2Days = 7, fromMailbox: string | null = null) {
     const sql = await this.db();
     const id = uuid();
     const status = scheduledAt ? "scheduled" : "draft";
     const attachmentsJson = attachments.length ? JSON.stringify(attachments) : null;
-    await sql`INSERT INTO campaigns (id,name,template_id,followup_template_id,followup_days,status,scheduled_at,attachments,created_at)
-      VALUES (${id},${name},${templateId},${followupTemplateId},${followupDays},${status},${scheduledAt},${attachmentsJson},now())`;
+    await sql`INSERT INTO campaigns (id,name,template_id,followup_template_id,followup_days,followup2_template_id,followup2_days,status,scheduled_at,attachments,from_mailbox,created_at)
+      VALUES (${id},${name},${templateId},${followupTemplateId},${followupDays},${followup2TemplateId},${followup2Days},${status},${scheduledAt},${attachmentsJson},${fromMailbox},now())`;
     // Bulk-insert all recipients in a single round-trip. Inserting one row per
     // prospect (as before) meant ~2 network calls × N prospects to Neon — a
     // 40-prospect list took ~18s and made the UI look frozen. This is one query.
@@ -521,7 +693,7 @@ class PgStore implements Store {
         SELECT gen_random_uuid()::text, ${id}, p.id, p.name, p.email, p.company, 'queued', 0, 0
         FROM prospects p WHERE p.id = ANY(${prospectIds})`;
     }
-    return { id, name, templateId, followupTemplateId, followupDays, status, scheduledAt, createdAt: new Date().toISOString(), recipientCount: prospectIds.length, attachments } as Campaign;
+    return { id, name, templateId, followupTemplateId, followupDays, followup2TemplateId, followup2Days, status, scheduledAt, createdAt: new Date().toISOString(), recipientCount: prospectIds.length, attachments, fromMailbox } as Campaign;
   }
   async setCampaignStatus(id: string, status: Campaign["status"]) {
     const sql = await this.db();
@@ -534,7 +706,9 @@ class PgStore implements Store {
   }
   async dueScheduledCampaigns() {
     const sql = await this.db();
-    const rows = await sql`SELECT c.*, (SELECT count(*)::int FROM recipients r WHERE r.campaign_id=c.id) AS rc
+    const rows = await sql`SELECT c.id, c.name, c.template_id, c.followup_template_id, c.followup_days,
+      c.followup2_template_id, c.followup2_days, c.status, c.scheduled_at, c.from_mailbox, c.created_at,
+      (SELECT count(*)::int FROM recipients r WHERE r.campaign_id=c.id) AS rc
       FROM campaigns c WHERE c.status='scheduled' AND c.scheduled_at IS NOT NULL AND c.scheduled_at <= now()`;
     return rows.map((r) => this.mapCampaign(r));
   }
@@ -556,6 +730,39 @@ class PgStore implements Store {
     const sql = await this.db();
     await sql`UPDATE recipients SET followup_sent_at=now() WHERE id=${recipientId}`;
   }
+  async markFollowup2Sent(recipientId: string) {
+    const sql = await this.db();
+    await sql`UPDATE recipients SET followup2_sent_at=now() WHERE id=${recipientId}`;
+  }
+  async markFailed(recipientId: string) {
+    const sql = await this.db();
+    await sql`UPDATE recipients SET status='failed' WHERE id=${recipientId}`;
+  }
+  async bouncedEmails() {
+    const sql = await this.db();
+    const rows = await sql`SELECT DISTINCT lower(email) AS e FROM recipients WHERE status='bounced' AND email IS NOT NULL`;
+    return new Set(rows.map((r) => r.e as string));
+  }
+  async suppress(email: string, reason: string) {
+    const e = (email || "").toLowerCase();
+    if (!e) return;
+    const sql = await this.db();
+    await sql`INSERT INTO suppressions (email, reason) VALUES (${e}, ${reason}) ON CONFLICT (email) DO NOTHING`;
+  }
+  async suppressedEmails() {
+    const sql = await this.db();
+    const rows = await sql`
+      SELECT lower(email) AS e FROM recipients WHERE status='bounced' AND email IS NOT NULL
+      UNION
+      SELECT lower(email) AS e FROM suppressions WHERE email IS NOT NULL`;
+    return new Set(rows.map((r) => r.e as string));
+  }
+  async requeueBounced(campaignId: string) {
+    const sql = await this.db();
+    const rows = await sql`UPDATE recipients SET status='queued', sent_at=NULL, delivered_at=NULL WHERE campaign_id=${campaignId} AND status='bounced' RETURNING id`;
+    if (rows.length) await sql`UPDATE campaigns SET status='sending' WHERE id=${campaignId} AND status='sent'`;
+    return rows.length;
+  }
   async deleteRecipients(campaignId: string, ids: string[]) {
     if (!ids.length) return 0;
     const sql = await this.db();
@@ -567,15 +774,33 @@ class PgStore implements Store {
     const rows = await sql`
       SELECT r.*, c.id AS c_id, c.name AS c_name, c.template_id AS c_template_id,
              c.followup_template_id AS c_followup_template_id, c.followup_days AS c_followup_days,
-             c.status AS c_status, c.created_at AS c_created_at, c.attachments AS c_attachments
+             c.status AS c_status, c.created_at AS c_created_at, c.from_mailbox AS c_from_mailbox
       FROM recipients r JOIN campaigns c ON c.id = r.campaign_id
       WHERE c.followup_template_id IS NOT NULL
         AND r.followup_sent_at IS NULL
         AND r.sent_at IS NOT NULL
-        AND r.status NOT IN ('replied','bounced','queued')
+        AND r.status NOT IN ('replied','bounced','queued','failed')
         AND r.sent_at <= now() - (c.followup_days * INTERVAL '1 day')`;
     return rows.map((r) => ({
-      campaign: this.mapCampaign({ id: r.c_id, name: r.c_name, template_id: r.c_template_id, followup_template_id: r.c_followup_template_id, followup_days: r.c_followup_days, status: r.c_status, created_at: r.c_created_at, attachments: r.c_attachments }),
+      campaign: this.mapCampaign({ id: r.c_id, name: r.c_name, template_id: r.c_template_id, followup_template_id: r.c_followup_template_id, followup_days: r.c_followup_days, status: r.c_status, created_at: r.c_created_at, from_mailbox: r.c_from_mailbox }),
+      recipient: this.mapRecipient(r),
+    }));
+  }
+  async dueFollowups2() {
+    const sql = await this.db();
+    const rows = await sql`
+      SELECT r.*, c.id AS c_id, c.name AS c_name, c.template_id AS c_template_id,
+             c.followup_template_id AS c_followup_template_id, c.followup_days AS c_followup_days,
+             c.followup2_template_id AS c_followup2_template_id, c.followup2_days AS c_followup2_days,
+             c.status AS c_status, c.created_at AS c_created_at, c.from_mailbox AS c_from_mailbox
+      FROM recipients r JOIN campaigns c ON c.id = r.campaign_id
+      WHERE c.followup2_template_id IS NOT NULL
+        AND r.followup2_sent_at IS NULL
+        AND r.followup_sent_at IS NOT NULL
+        AND r.status NOT IN ('replied','bounced','queued','failed')
+        AND r.followup_sent_at <= now() - (c.followup2_days * INTERVAL '1 day')`;
+    return rows.map((r) => ({
+      campaign: this.mapCampaign({ id: r.c_id, name: r.c_name, template_id: r.c_template_id, followup_template_id: r.c_followup_template_id, followup_days: r.c_followup_days, followup2_template_id: r.c_followup2_template_id, followup2_days: r.c_followup2_days, status: r.c_status, created_at: r.c_created_at, from_mailbox: r.c_from_mailbox }),
       recipient: this.mapRecipient(r),
     }));
   }
@@ -591,6 +816,60 @@ class PgStore implements Store {
     const sql = await this.db();
     const rows = await sql`SELECT * FROM recipients`;
     return rows.map((r) => this.mapRecipient(r));
+  }
+  async recipientsToReconcile() {
+    const sql = await this.db();
+    const rows = await sql`SELECT id, email, status, sent_at FROM recipients
+      WHERE sent_at IS NOT NULL AND status NOT IN ('replied','bounced')`;
+    return rows.map((r) => ({ id: r.id as string, email: (r.email as string) || "", status: r.status as RecipientStatus, sentAt: r.sent_at ? new Date(r.sent_at as string).toISOString() : null }));
+  }
+  async statsSummary() {
+    const sql = await this.db();
+    const rows = await sql`SELECT
+      (SELECT count(*)::int FROM prospects) AS prospects,
+      count(*) FILTER (WHERE sent_at IS NOT NULL)::int AS sent,
+      count(*) FILTER (WHERE delivered_at IS NOT NULL)::int AS delivered,
+      count(*) FILTER (WHERE opened_at IS NOT NULL)::int AS opened,
+      count(*) FILTER (WHERE clicked_at IS NOT NULL)::int AS clicked,
+      count(*) FILTER (WHERE replied_at IS NOT NULL)::int AS replied,
+      count(*) FILTER (WHERE status = 'bounced')::int AS bounced
+      FROM recipients`;
+    const r = rows[0] || {};
+    return { prospects: (r.prospects as number) || 0, sent: (r.sent as number) || 0, delivered: (r.delivered as number) || 0, opened: (r.opened as number) || 0, clicked: (r.clicked as number) || 0, replied: (r.replied as number) || 0, bounced: (r.bounced as number) || 0 };
+  }
+  async campaignPerformance() {
+    const sql = await this.db();
+    const rows = await sql`SELECT c.id, c.name, c.status,
+      count(r.id)::int AS recipients,
+      count(*) FILTER (WHERE r.sent_at IS NOT NULL)::int AS sent,
+      count(*) FILTER (WHERE r.delivered_at IS NOT NULL)::int AS delivered,
+      count(*) FILTER (WHERE r.opened_at IS NOT NULL)::int AS opened,
+      count(*) FILTER (WHERE r.clicked_at IS NOT NULL)::int AS clicked,
+      count(*) FILTER (WHERE r.replied_at IS NOT NULL)::int AS replied
+      FROM campaigns c LEFT JOIN recipients r ON r.campaign_id = c.id
+      GROUP BY c.id, c.name, c.status, c.created_at ORDER BY c.created_at DESC`;
+    return rows.map((r) => ({
+      id: r.id as string, name: r.name as string, status: r.status as Campaign["status"],
+      recipientCount: (r.recipients as number) || 0, recipients: (r.recipients as number) || 0,
+      sent: (r.sent as number) || 0, delivered: (r.delivered as number) || 0, opened: (r.opened as number) || 0,
+      clicked: (r.clicked as number) || 0, replied: (r.replied as number) || 0,
+    }));
+  }
+  async templatePerformance() {
+    const sql = await this.db();
+    // Aggregated in SQL (tiny result set). Opens/replies attributed to the first-mail template.
+    const rows = await sql`SELECT c.template_id AS id,
+      count(DISTINCT c.id)::int AS campaigns,
+      count(*) FILTER (WHERE r.sent_at IS NOT NULL)::int AS sent,
+      count(*) FILTER (WHERE r.opened_at IS NOT NULL)::int AS opened,
+      count(*) FILTER (WHERE r.clicked_at IS NOT NULL)::int AS clicked,
+      count(*) FILTER (WHERE r.replied_at IS NOT NULL)::int AS replied
+      FROM campaigns c LEFT JOIN recipients r ON r.campaign_id = c.id
+      GROUP BY c.template_id`;
+    return rows.map((r) => ({
+      id: r.id as string, campaigns: (r.campaigns as number) || 0, sent: (r.sent as number) || 0,
+      opened: (r.opened as number) || 0, clicked: (r.clicked as number) || 0, replied: (r.replied as number) || 0,
+    }));
   }
   async createList(name: string, prospectIds: string[], source: string) {
     const sql = await this.db();
@@ -662,6 +941,14 @@ class PgStore implements Store {
     const rows = await sql`SELECT
       (SELECT count(*)::int FROM recipients WHERE sent_at::date = current_date)
       + (SELECT count(*)::int FROM recipients WHERE followup_sent_at::date = current_date) AS n`;
+    return (rows[0]?.n as number) || 0;
+  }
+  async sentTodayByMailbox(mailbox: string | null) {
+    const sql = await this.db();
+    const rows = await sql`
+      SELECT count(*)::int AS n FROM recipients r JOIN campaigns c ON c.id = r.campaign_id
+      WHERE c.from_mailbox IS NOT DISTINCT FROM ${mailbox}
+        AND (r.sent_at::date = current_date OR r.followup_sent_at::date = current_date OR r.followup2_sent_at::date = current_date)`;
     return (rows[0]?.n as number) || 0;
   }
   private mapReq(r: Record<string, unknown>): SourcingRequest {

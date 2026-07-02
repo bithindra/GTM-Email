@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { use } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Send, Loader2, RefreshCw, ArrowLeft, Reply, Eye, Trash2, X, Mail } from "lucide-react";
+import { Send, Loader2, RefreshCw, ArrowLeft, Reply, Eye, Trash2, X, Mail, Download } from "lucide-react";
 import StatusBadge from "@/components/StatusBadge";
 import type { Campaign, Recipient, Template } from "@/lib/types";
 
@@ -28,6 +28,7 @@ export default function CampaignDetail({ params }: { params: Promise<{ id: strin
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [preview, setPreview] = useState<PreviewData | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [filter, setFilter] = useState<"sent" | "delivered" | "opened" | "clicked" | "replied" | null>(null);
 
   const load = useCallback(async () => {
     const d = await fetch(`/api/campaigns/${id}`).then((r) => r.json());
@@ -41,7 +42,12 @@ export default function CampaignDetail({ params }: { params: Promise<{ id: strin
     setSel((prev) => { const n = new Set(prev); n.has(rid) ? n.delete(rid) : n.add(rid); return n; });
   }
   function toggleAll() {
-    setSel(sel.size === recipients.length ? new Set() : new Set(recipients.map((r) => r.id)));
+    setSel((prev) => {
+      const allSel = visible.length > 0 && visible.every((r) => prev.has(r.id));
+      const n = new Set(prev);
+      visible.forEach((r) => (allSel ? n.delete(r.id) : n.add(r.id)));
+      return n;
+    });
   }
   async function deleteSelected() {
     if (sel.size === 0) return;
@@ -62,10 +68,11 @@ export default function CampaignDetail({ params }: { params: Promise<{ id: strin
 
   useEffect(() => { load(); }, [load]);
 
-  // Auto-refresh status while a campaign is live so opens/clicks/replies stream in.
+  // Auto-refresh only while a campaign is actively sending (every 20s). Once "sent",
+  // stop polling — use the Refresh button for on-demand updates. Keeps Neon load low.
   useEffect(() => {
-    if (campaign?.status !== "sent" && campaign?.status !== "sending") return;
-    const t = setInterval(load, 5000);
+    if (campaign?.status !== "sending") return;
+    const t = setInterval(load, 20000);
     return () => clearInterval(t);
   }, [campaign?.status, load]);
 
@@ -115,6 +122,32 @@ export default function CampaignDetail({ params }: { params: Promise<{ id: strin
     } finally { setSending(false); }
   }
 
+  async function retryBounced() {
+    setSending(true);
+    setNotice("");
+    try {
+      const d = await fetch(`/api/campaigns/${id}/requeue`, { method: "POST" }).then((r) => r.json());
+      if (d.error) setNotice(d.error);
+      else setNotice(d.requeued ? `Re-queued ${d.requeued} bounced recipient(s) — they'll resend within the mailbox's daily limit.` : "No bounced recipients to retry.");
+      await load();
+    } finally { setSending(false); }
+  }
+
+  // Export the current (filtered) recipient view as CSV — for reporting or CRM import.
+  function exportCsv() {
+    const esc = (v: string | number | null) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const rows = [
+      ["Name", "Email", "Company", "Status", "Opens", "Clicks", "Sent at", "Opened at", "Replied at"].join(","),
+      ...visible.map((r) => [esc(r.name), esc(r.email), esc(r.company), esc(r.status), r.opens, r.clicks, esc(r.sentAt), esc(r.openedAt), esc(r.repliedAt)].join(",")),
+    ];
+    const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${(campaign?.name || "campaign").replace(/[^\w.-]+/g, "_")}${filter ? `_${filter}` : ""}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
   async function markReplied(rid: string) {
     await fetch(`/api/recipients/${rid}/event`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "replied" }) });
     await load();
@@ -130,6 +163,19 @@ export default function CampaignDetail({ params }: { params: Promise<{ id: strin
     replied: recipients.filter((r) => r.repliedAt).length,
   };
   const queued = recipients.filter((r) => r.status === "queued").length;
+  const bounced = recipients.filter((r) => r.status === "bounced").length;
+
+  // Clicking a stat card filters the recipients table to those clients.
+  const filterFns: Record<NonNullable<typeof filter>, (r: Recipient) => boolean> = {
+    sent: (r) => !!r.sentAt, delivered: (r) => !!r.deliveredAt, opened: (r) => !!r.openedAt,
+    clicked: (r) => !!r.clickedAt, replied: (r) => !!r.repliedAt,
+  };
+  const visible = filter ? recipients.filter(filterFns[filter]) : recipients;
+  const stats: [typeof filter, string, number][] = [
+    ["sent", "Sent", counts.sent], ["delivered", "Delivered", counts.delivered],
+    ["opened", "Opened", counts.opened], ["clicked", "Clicked", counts.clicked],
+    ["replied", "Replied", counts.replied],
+  ];
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
@@ -151,6 +197,11 @@ export default function CampaignDetail({ params }: { params: Promise<{ id: strin
             <Trash2 className="w-4 h-4" /> {campaign.status === "scheduled" ? "Cancel schedule" : "Delete"}
           </button>
           <button className="btn btn-ghost" onClick={syncInbox} disabled={sending}><Mail className="w-4 h-4" /> Sync inbox</button>
+          {bounced > 0 && (
+            <button className="btn btn-ghost" onClick={retryBounced} disabled={sending} title="Re-queue bounced recipients (e.g. after a daily-limit misfire)">
+              <RefreshCw className="w-4 h-4" /> Retry bounced ({bounced})
+            </button>
+          )}
           {campaign.followupTemplateId && (
             <button className="btn btn-ghost" onClick={runFollowups} disabled={sending}><Reply className="w-4 h-4" /> Send follow-ups</button>
           )}
@@ -163,13 +214,19 @@ export default function CampaignDetail({ params }: { params: Promise<{ id: strin
 
       {notice && <div className="mb-5 p-3 rounded-lg bg-indigo-50 text-indigo-800 text-sm">{notice}</div>}
 
-      {/* Stat strip */}
+      {/* Stat strip — click a card to filter the recipients list to those clients */}
       <div className="grid grid-cols-5 gap-3 mb-6">
-        {[["Sent", counts.sent], ["Delivered", counts.delivered], ["Opened", counts.opened], ["Clicked", counts.clicked], ["Replied", counts.replied]].map(([k, v]) => (
-          <div key={k as string} className="card p-4 text-center">
-            <div className="text-2xl font-bold">{v as number}</div>
-            <div className="text-xs text-muted mt-0.5">{k as string}</div>
-          </div>
+        {stats.map(([key, label, v]) => (
+          <button
+            key={label}
+            onClick={() => setFilter((prev) => (prev === key ? null : key))}
+            disabled={v === 0}
+            className={`card p-4 text-center transition ${v === 0 ? "opacity-50 cursor-default" : "cursor-pointer hover:border-primary"} ${filter === key ? "border-primary ring-2 ring-primary/30 bg-indigo-50" : ""}`}
+            title={v === 0 ? `No ${label.toLowerCase()} yet` : `Show the ${v} client${v === 1 ? "" : "s"} who ${label.toLowerCase()}`}
+          >
+            <div className="text-2xl font-bold">{v}</div>
+            <div className="text-xs text-muted mt-0.5">{label}</div>
+          </button>
         ))}
       </div>
 
@@ -177,18 +234,30 @@ export default function CampaignDetail({ params }: { params: Promise<{ id: strin
         {/* Recipients */}
         <div className="card overflow-hidden">
           <div className="p-4 border-b border-border-soft flex items-center justify-between">
-            <span className="font-semibold text-sm">Recipients</span>
-            {sel.size > 0 && (
-              <button className="btn btn-ghost !py-1.5 !px-3 text-danger" onClick={deleteSelected}>
-                <Trash2 className="w-4 h-4" /> Remove selected ({sel.size})
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-sm">Recipients</span>
+              {filter && (
+                <button className="chip chip-active !py-0.5" onClick={() => setFilter(null)} title="Clear filter">
+                  {filter} · {visible.length} <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {sel.size > 0 && (
+                <button className="btn btn-ghost !py-1.5 !px-3 text-danger" onClick={deleteSelected}>
+                  <Trash2 className="w-4 h-4" /> Remove selected ({sel.size})
+                </button>
+              )}
+              <button className="btn btn-ghost !py-1.5 !px-3" onClick={exportCsv} title="Download the current view as CSV">
+                <Download className="w-4 h-4" /> Export CSV
               </button>
-            )}
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-muted text-left">
                 <tr>
-                  <th className="p-3 w-8"><input type="checkbox" checked={recipients.length > 0 && sel.size === recipients.length} onChange={toggleAll} /></th>
+                  <th className="p-3 w-8"><input type="checkbox" checked={visible.length > 0 && visible.every((r) => sel.has(r.id))} onChange={toggleAll} /></th>
                   <th className="p-3">Client</th>
                   <th className="p-3">Status</th>
                   <th className="p-3 text-center">Opens</th>
@@ -197,7 +266,7 @@ export default function CampaignDetail({ params }: { params: Promise<{ id: strin
                 </tr>
               </thead>
               <tbody>
-                {recipients.map((r) => (
+                {visible.map((r) => (
                   <tr key={r.id} className="border-t border-border-soft">
                     <td className="p-3 text-center"><input type="checkbox" checked={sel.has(r.id)} onChange={() => toggleSel(r.id)} /></td>
                     <td className="p-3"><div className="font-medium">{r.name}</div><div className="text-xs text-muted">{r.email}</div></td>
