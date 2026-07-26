@@ -12,6 +12,17 @@ function humanSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+// Mails grouped by category, so picking "the XamBaaz one" out of a dozen is immediate.
+// The API already returns them in category order, so one pass preserves it.
+function groupTemplates(templates: Template[]): [string, Template[]][] {
+  const g = new Map<string, Template[]>();
+  for (const t of templates) {
+    const k = t.category || "Uncategorised";
+    (g.get(k) ?? g.set(k, []).get(k)!).push(t);
+  }
+  return [...g.entries()];
+}
+
 type Target = { prospectIds: string[] } | { listId: string } | { listIds: string[] };
 
 export default function CampaignModal({
@@ -72,6 +83,7 @@ export default function CampaignModal({
   }
 
   const attachBytes = useMemo(() => attachments.reduce((s, a) => s + a.size, 0), [attachments]);
+  const templateGroups = useMemo(() => groupTemplates(templates), [templates]);
 
   function readAsBase64(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -198,7 +210,11 @@ export default function CampaignModal({
 
         <label className="text-sm font-semibold block mb-1">Mail to send</label>
         <select className="select mb-4" value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
-          {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          {templateGroups.map(([cat, items]) => (
+            <optgroup key={cat} label={cat}>
+              {items.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </optgroup>
+          ))}
         </select>
 
         <label className="text-sm font-semibold block mb-1">
@@ -207,7 +223,11 @@ export default function CampaignModal({
         <div className="flex gap-2 mb-4">
           <select className="select" value={followupTemplateId} onChange={(e) => setFollowupTemplateId(e.target.value)}>
             <option value="">— No follow-up —</option>
-            {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            {templateGroups.map(([cat, items]) => (
+              <optgroup key={cat} label={cat}>
+                {items.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </optgroup>
+            ))}
           </select>
           <div className="flex items-center gap-1 shrink-0">
             <span className="text-sm text-muted">after</span>
@@ -225,7 +245,11 @@ export default function CampaignModal({
             <div className="flex gap-2 mb-4">
               <select className="select" value={followup2TemplateId} onChange={(e) => setFollowup2TemplateId(e.target.value)}>
                 <option value="">— No second follow-up —</option>
-                {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                {templateGroups.map(([cat, items]) => (
+                  <optgroup key={cat} label={cat}>
+                    {items.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </optgroup>
+                ))}
               </select>
               <div className="flex items-center gap-1 shrink-0">
                 <span className="text-sm text-muted">after</span>

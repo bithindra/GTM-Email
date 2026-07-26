@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { FileText, Plus, Save, Trash2, Loader2, Megaphone, Mail, Sparkles, ShieldCheck, AlertTriangle, CheckCircle2, TrendingUp } from "lucide-react";
+import { FileText, Plus, Save, Trash2, Loader2, Megaphone, Mail, Sparkles, ShieldCheck, AlertTriangle, CheckCircle2, TrendingUp, Copy, Library, X } from "lucide-react";
 import type { Template } from "@/lib/types";
+import type { LibraryTemplate } from "@/lib/templateLibrary";
 
 type Perf = { id: string; campaigns: number; sent: number; opened: number; clicked: number; replied: number };
 
@@ -20,6 +21,8 @@ const FORMATS: { id: Format; label: string; hint: string; icon: typeof Mail }[] 
   { id: "rich", label: "Rich", hint: "Light styling, tracking on", icon: FileText },
   { id: "newsletter", label: "Newsletter", hint: "Branded card for broadcasts", icon: Megaphone },
 ];
+
+const UNCATEGORISED = "Uncategorised";
 
 const NEWSLETTER_STARTER = {
   name: "Company Update / Newsletter",
@@ -127,6 +130,8 @@ export default function TemplatesPage() {
   const [active, setActive] = useState<Template | null>(null);
   const [saving, setSaving] = useState(false);
   const [perf, setPerf] = useState<Record<string, Perf>>({});
+  const [library, setLibrary] = useState<LibraryTemplate[]>([]);
+  const [showLibrary, setShowLibrary] = useState(false);
 
   async function load(selectId?: string) {
     const d = await fetch("/api/templates").then((r) => r.json());
@@ -137,13 +142,35 @@ export default function TemplatesPage() {
       .then((p) => setPerf(Object.fromEntries((p.performance ?? []).map((x: Perf) => [x.id, x]))))
       .catch(() => {});
   }
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    fetch("/api/templates/library").then((r) => r.json()).then((d) => setLibrary(d.library ?? [])).catch(() => {});
+  }, []);
 
   function newTemplate() {
-    setActive({ id: "", ...PLAIN_STARTER, type: "outreach", format: "plain", track: false, updatedAt: "" });
+    setActive({ id: "", ...PLAIN_STARTER, type: "outreach", format: "plain", track: false, category: active?.category ?? null, updatedAt: "" });
   }
   function newNewsletter() {
-    setActive({ id: "", ...NEWSLETTER_STARTER, type: "newsletter", format: "newsletter", track: true, updatedAt: "" });
+    setActive({ id: "", ...NEWSLETTER_STARTER, type: "newsletter", format: "newsletter", track: true, category: null, updatedAt: "" });
+  }
+  // Copy the open mail into a new, unsaved one — the quickest way to add a 3rd/4th
+  // angle to a category without retyping the parts that already work.
+  function duplicate() {
+    if (!active) return;
+    setActive({ ...active, id: "", name: `${active.name} (copy)`, updatedAt: "" });
+  }
+  // Instantiate a starter preset as a fresh, fully editable template.
+  async function addFromLibrary(p: LibraryTemplate) {
+    setShowLibrary(false);
+    setSaving(true);
+    try {
+      const d = await fetch("/api/templates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: p.name, subject: p.subject, body: p.body, format: p.format, track: p.track, category: p.category }),
+      }).then((r) => r.json());
+      await load(d.template?.id);
+    } finally { setSaving(false); }
   }
 
   function setFormat(format: Format) {
@@ -158,7 +185,7 @@ export default function TemplatesPage() {
       const d = await fetch("/api/templates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: active.id || undefined, name: active.name, subject: active.subject, body: active.body, format: fmtOf(active), track: trackOf(active) }),
+        body: JSON.stringify({ id: active.id || undefined, name: active.name, subject: active.subject, body: active.body, format: fmtOf(active), track: trackOf(active), category: active.category ?? null }),
       }).then((r) => r.json());
       await load(d.template?.id);
     } finally { setSaving(false); }
@@ -180,47 +207,109 @@ export default function TemplatesPage() {
   const track = active ? trackOf(active) : false;
   const report = useMemo(() => active ? lint(active.subject, active.body, format, track) : null, [active, format, track]);
 
+  // Group the sidebar by category. The API already returns category order, so a single
+  // pass preserves it; uncategorised mails fall to the bottom.
+  const groups = useMemo(() => {
+    const g = new Map<string, Template[]>();
+    for (const t of templates) {
+      const k = t.category || UNCATEGORISED;
+      (g.get(k) ?? g.set(k, []).get(k)!).push(t);
+    }
+    return [...g.entries()];
+  }, [templates]);
+
+  // Every category currently in use — powers the datalist so an existing category is
+  // one click and a brand-new one is just typing.
+  const knownCategories = useMemo(() => {
+    const s = new Set<string>();
+    for (const t of templates) if (t.category) s.add(t.category);
+    for (const p of library) s.add(p.category);
+    return [...s].sort();
+  }, [templates, library]);
+
   return (
     <div className="p-8 max-w-6xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold">Mail Templates</h1>
-          <p className="text-sm text-muted mt-1">Write once, personalize per recipient with merge fields &amp; <code>{`{spintax}`}</code> variation.</p>
+          <p className="text-sm text-muted mt-1">Saved mails grouped by category. Personalized per recipient with merge fields &amp; <code>{`{spintax}`}</code> variation.</p>
         </div>
         <div className="flex gap-2">
+          <button className="btn btn-ghost" onClick={() => setShowLibrary(true)}><Library className="w-4 h-4" /> Library</button>
           <button className="btn btn-ghost" onClick={newNewsletter}><Megaphone className="w-4 h-4" /> New newsletter</button>
-          <button className="btn btn-primary" onClick={newTemplate}><Plus className="w-4 h-4" /> New template</button>
+          <button className="btn btn-primary" onClick={newTemplate}><Plus className="w-4 h-4" /> New mail</button>
         </div>
       </div>
 
+      {/* Starter library — add another copy of a preset, or restore a deleted one */}
+      {showLibrary && (
+        <div className="card p-5 mb-6">
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-2 font-semibold"><Library className="w-[18px] h-[18px] text-primary" /> Starter mail library</div>
+            <button className="btn btn-ghost" onClick={() => setShowLibrary(false)}><X className="w-4 h-4" /></button>
+          </div>
+          <p className="text-xs text-muted mb-3">Click one to add an editable copy. Use these as the base for a new angle or a new category.</p>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2">
+            {library.map((p) => (
+              <button key={p.key} onClick={() => addFromLibrary(p)} disabled={saving}
+                className="text-left p-3 rounded-lg border border-border-soft hover:border-primary hover:bg-indigo-50 disabled:opacity-50">
+                <div className="text-[10px] uppercase tracking-wide text-primary font-semibold">{p.category}</div>
+                <div className="text-sm font-medium mt-0.5">{p.name}</div>
+                <div className="text-xs text-muted mt-1 line-clamp-2">{render(p.subject)}</div>
+              </button>
+            ))}
+            {library.length === 0 && <p className="text-sm text-muted">Library unavailable.</p>}
+          </div>
+        </div>
+      )}
+
       <div className="grid md:grid-cols-[200px_1fr_1fr] gap-5">
         {/* List */}
-        <div className="space-y-1">
-          {templates.map((t) => (
-            <button key={t.id} onClick={() => setActive(t)}
-              className={`w-full text-left p-3 rounded-lg border text-sm ${active?.id === t.id ? "border-primary bg-indigo-50" : "border-border-soft hover:bg-slate-50"}`}>
-              <div className="flex items-center gap-2 font-medium">
-                {fmtOf(t) === "newsletter" ? <Megaphone className="w-4 h-4 text-indigo-500" /> : fmtOf(t) === "plain" ? <Mail className="w-4 h-4 text-emerald-500" /> : <FileText className="w-4 h-4 text-muted" />}
-                <span className="flex-1 truncate">{t.name}</span>
+        <div className="space-y-4">
+          {groups.map(([cat, items]) => (
+            <div key={cat}>
+              <div className="text-[10px] uppercase tracking-wide text-muted font-bold px-1 mb-1.5 flex items-center justify-between">
+                <span className="truncate">{cat}</span><span className="text-slate-300">{items.length}</span>
               </div>
-              <span className="text-[10px] uppercase tracking-wide text-muted font-semibold mt-1 inline-block">{fmtOf(t)}</span>
-              {(perf[t.id]?.sent ?? 0) > 0 && (
-                <div className="text-[10px] text-muted mt-0.5">
-                  {perf[t.id].sent} sent · {Math.round((perf[t.id].opened / perf[t.id].sent) * 100)}% open · {perf[t.id].replied} repl{perf[t.id].replied === 1 ? "y" : "ies"}
-                </div>
-              )}
-            </button>
+              <div className="space-y-1">
+                {items.map((t) => (
+                  <button key={t.id} onClick={() => setActive(t)} title={t.name}
+                    className={`w-full text-left p-3 rounded-lg border text-sm ${active?.id === t.id ? "border-primary bg-indigo-50" : "border-border-soft hover:bg-slate-50"}`}>
+                    <div className="flex items-center gap-2 font-medium">
+                      {fmtOf(t) === "newsletter" ? <Megaphone className="w-4 h-4 text-indigo-500" /> : fmtOf(t) === "plain" ? <Mail className="w-4 h-4 text-emerald-500" /> : <FileText className="w-4 h-4 text-muted" />}
+                      <span className="flex-1 truncate">{t.name}</span>
+                    </div>
+                    <span className="text-[10px] uppercase tracking-wide text-muted font-semibold mt-1 inline-block">{fmtOf(t)}</span>
+                    {(perf[t.id]?.sent ?? 0) > 0 && (
+                      <div className="text-[10px] text-muted mt-0.5">
+                        {perf[t.id].sent} sent · {Math.round((perf[t.id].opened / perf[t.id].sent) * 100)}% open · {perf[t.id].replied} repl{perf[t.id].replied === 1 ? "y" : "ies"}
+                      </div>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
           ))}
-          {templates.length === 0 && <p className="text-sm text-muted">No templates yet.</p>}
+          {templates.length === 0 && <p className="text-sm text-muted">No mails yet — open the Library to add one.</p>}
         </div>
 
         {/* Editor */}
         {active ? (
           <>
             <div className="card p-5 space-y-4">
-              <div>
-                <label className="text-sm font-semibold block mb-1">Template name</label>
-                <input className="input" value={active.name} onChange={(e) => setActive({ ...active, name: e.target.value })} />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-sm font-semibold block mb-1">Mail name</label>
+                  <input className="input" value={active.name} onChange={(e) => setActive({ ...active, name: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-sm font-semibold block mb-1">Category</label>
+                  <input className="input" list="template-categories" placeholder="e.g. AI Consulting"
+                    value={active.category ?? ""} onChange={(e) => setActive({ ...active, category: e.target.value })} />
+                  <datalist id="template-categories">
+                    {knownCategories.map((c) => <option key={c} value={c} />)}
+                  </datalist>
+                </div>
               </div>
 
               {/* Format selector */}
@@ -262,8 +351,9 @@ export default function TemplatesPage() {
               </div>
               <div className="flex gap-2 pt-1">
                 <button className="btn btn-primary" onClick={save} disabled={saving}>
-                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} {active.id ? "Save" : "Save as new"}
                 </button>
+                <button className="btn btn-ghost" onClick={duplicate} title="Copy this mail into a new one — then edit and save"><Copy className="w-4 h-4" /> Duplicate</button>
                 <button className="btn btn-ghost" onClick={del}><Trash2 className="w-4 h-4" /> Delete</button>
               </div>
             </div>

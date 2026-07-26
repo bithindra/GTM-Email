@@ -1,5 +1,15 @@
 import { v4 as uuid } from "uuid";
 import type { Prospect, Template, Campaign, Recipient, RecipientStatus, List, SourcingRequest, SearchFilters, Attachment } from "./types";
+import { TEMPLATE_LIBRARY } from "./templateLibrary";
+
+// Templates list in category order (uncategorised last), newest-edited first inside a
+// group — so the UI can render category headers by walking the list once.
+function templateOrder(a: Template, b: Template): number {
+  const ca = a.category || "￿";
+  const cb = b.category || "￿";
+  if (ca !== cb) return ca.localeCompare(cb);
+  return b.updatedAt.localeCompare(a.updatedAt);
+}
 
 /* ============================================================
    Storage abstraction.
@@ -59,16 +69,9 @@ export interface Store {
   fulfillSourcingRequest(id: string, info: { resultListId: string | null; importedCount: number; note: string; status?: SourcingRequest["status"] }): Promise<void>;
 }
 
-const DEFAULT_TEMPLATE_BODY = `Hi {{first_name}},
-
-I came across {{company}} and was impressed by what you're building in the {{city}} market. As the {{title}}, you're probably juggling growth and a hundred other things.
-
-We help founders like you [your value prop in one line]. Companies your size typically see [specific outcome] within the first 90 days.
-
-Worth a quick 15-minute call next week to see if it's a fit?
-
-Best,
-Bithindra`;
+// app_meta key recording that the starter mail library has been seeded. Bump the
+// suffix only if a future library revision should be applied to existing databases.
+const TEMPLATE_LIBRARY_MARKER = "template_library_v1";
 
 /* ---------------- In-memory backend ---------------- */
 class MemoryStore implements Store {
@@ -87,14 +90,19 @@ class MemoryStore implements Store {
 
   private seed() {
     const now = Date.now();
-    const tmpl: Template = {
+    // The starter mail library — same 8 presets the Postgres backend seeds.
+    this.templates = TEMPLATE_LIBRARY.map((p) => ({
       id: uuid(),
-      name: "Founder Cold Intro",
-      subject: "Quick idea for {{company}}",
-      body: DEFAULT_TEMPLATE_BODY,
+      name: p.name,
+      subject: p.subject,
+      body: p.body,
+      category: p.category,
+      format: p.format,
+      track: p.track,
+      type: p.format === "newsletter" ? ("newsletter" as const) : ("outreach" as const),
       updatedAt: new Date().toISOString(),
-    };
-    this.templates.push(tmpl);
+    }));
+    const tmpl = this.templates[0];
 
     const seedProspects: Array<Partial<Prospect>> = [
       { name: "Sofia Garcia", title: "Founder & CEO", company: "Nova Labs", companySize: "11-50", industry: "SaaS", country: "United States", city: "San Francisco", email: "sofia@novalabs.com" },
@@ -187,7 +195,7 @@ class MemoryStore implements Store {
     return this.prospects.filter((p) => want.has(p.id));
   }
   async getTemplates() {
-    return [...this.templates].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return [...this.templates].sort(templateOrder);
   }
   async getTemplate(id: string) {
     return this.templates.find((t) => t.id === id) ?? null;
@@ -196,6 +204,7 @@ class MemoryStore implements Store {
     const format = t.format || (t.type === "newsletter" ? "newsletter" : "rich");
     const type: Template["type"] = format === "newsletter" ? "newsletter" : "outreach";
     const track = typeof t.track === "boolean" ? t.track : format !== "plain";
+    const category = t.category?.trim() || null;
     const existing = t.id ? this.templates.find((x) => x.id === t.id) : null;
     if (existing) {
       existing.name = t.name;
@@ -204,10 +213,11 @@ class MemoryStore implements Store {
       existing.type = type;
       existing.format = format;
       existing.track = track;
+      existing.category = category;
       existing.updatedAt = new Date().toISOString();
       return existing;
     }
-    const created: Template = { id: t.id || uuid(), name: t.name, subject: t.subject, body: t.body, type, format, track, updatedAt: new Date().toISOString() };
+    const created: Template = { id: t.id || uuid(), name: t.name, subject: t.subject, body: t.body, type, format, track, category, updatedAt: new Date().toISOString() };
     this.templates.push(created);
     return created;
   }
@@ -503,6 +513,7 @@ class PgStore implements Store {
     await sql`ALTER TABLE templates ADD COLUMN IF NOT EXISTS type text DEFAULT 'outreach'`;
     await sql`ALTER TABLE templates ADD COLUMN IF NOT EXISTS format text`;
     await sql`ALTER TABLE templates ADD COLUMN IF NOT EXISTS track boolean`;
+    await sql`ALTER TABLE templates ADD COLUMN IF NOT EXISTS category text`;
     await sql`CREATE TABLE IF NOT EXISTS campaigns (
       id text PRIMARY KEY, name text, template_id text, status text, created_at timestamptz DEFAULT now())`;
     await sql`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS followup_template_id text`;
@@ -527,10 +538,21 @@ class PgStore implements Store {
       list_id text, prospect_id text, PRIMARY KEY (list_id, prospect_id))`;
     await sql`CREATE TABLE IF NOT EXISTS suppressions (
       email text PRIMARY KEY, reason text, created_at timestamptz DEFAULT now())`;
-    const t = await sql`SELECT count(*)::int AS n FROM templates`;
-    if (t[0].n === 0) {
-      await sql`INSERT INTO templates (id, name, subject, body, updated_at)
-        VALUES (${uuid()}, ${"Founder Cold Intro"}, ${"Quick idea for {{company}}"}, ${DEFAULT_TEMPLATE_BODY}, now())`;
+    await sql`CREATE TABLE IF NOT EXISTS app_meta (
+      key text PRIMARY KEY, value text, created_at timestamptz DEFAULT now())`;
+
+    // Seed the starter mail library exactly once. Guarded by an app_meta marker rather
+    // than "is the templates table empty" so it (a) still fires on a database that
+    // already has templates, and (b) never resurrects a preset the user deleted.
+    const seeded = await sql`SELECT 1 FROM app_meta WHERE key=${TEMPLATE_LIBRARY_MARKER}`;
+    if (!seeded.length) {
+      for (const p of TEMPLATE_LIBRARY) {
+        const type = p.format === "newsletter" ? "newsletter" : "outreach";
+        await sql`INSERT INTO templates (id, name, subject, body, type, format, track, category, updated_at)
+          VALUES (${uuid()}, ${p.name}, ${p.subject}, ${p.body}, ${type}, ${p.format}, ${p.track}, ${p.category}, now())`;
+      }
+      await sql`INSERT INTO app_meta (key, value) VALUES (${TEMPLATE_LIBRARY_MARKER}, ${String(TEMPLATE_LIBRARY.length)})
+        ON CONFLICT (key) DO NOTHING`;
     }
   }
 
@@ -624,12 +646,14 @@ class PgStore implements Store {
       id: r.id as string, name: r.name as string, subject: r.subject as string, body: r.body as string,
       type, format,
       track: typeof r.track === "boolean" ? r.track : format !== "plain",
+      category: (r.category as string) || null,
       updatedAt: new Date(r.updated_at as string).toISOString(),
     };
   }
   async getTemplates() {
     const sql = await this.db();
-    const rows = await sql`SELECT * FROM templates ORDER BY updated_at DESC`;
+    // Category order (uncategorised last), newest-edited first within a category.
+    const rows = await sql`SELECT * FROM templates ORDER BY coalesce(category, '￿'), updated_at DESC`;
     return rows.map((r) => this.mapTemplate(r));
   }
   async getTemplate(id: string) {
@@ -642,12 +666,13 @@ class PgStore implements Store {
     const format = t.format || (t.type === "newsletter" ? "newsletter" : "rich");
     const type: Template["type"] = format === "newsletter" ? "newsletter" : "outreach";
     const track = typeof t.track === "boolean" ? t.track : format !== "plain";
+    const category = t.category?.trim() || null;
     if (t.id) {
-      const upd = await sql`UPDATE templates SET name=${t.name}, subject=${t.subject}, body=${t.body}, type=${type}, format=${format}, track=${track}, updated_at=now() WHERE id=${t.id} RETURNING *`;
+      const upd = await sql`UPDATE templates SET name=${t.name}, subject=${t.subject}, body=${t.body}, type=${type}, format=${format}, track=${track}, category=${category}, updated_at=now() WHERE id=${t.id} RETURNING *`;
       if (upd.length) return this.mapTemplate(upd[0]);
     }
     const id = t.id || uuid();
-    const ins = await sql`INSERT INTO templates (id,name,subject,body,type,format,track,updated_at) VALUES (${id},${t.name},${t.subject},${t.body},${type},${format},${track},now()) RETURNING *`;
+    const ins = await sql`INSERT INTO templates (id,name,subject,body,type,format,track,category,updated_at) VALUES (${id},${t.name},${t.subject},${t.body},${type},${format},${track},${category},now()) RETURNING *`;
     return this.mapTemplate(ins[0]);
   }
   async deleteTemplate(id: string) {

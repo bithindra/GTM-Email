@@ -34,6 +34,10 @@ export type Template = {
   // Open-pixel + click tracking. Off = no tracking domain/pixel (more human, better
   // inboxing). Defaults: on for rich/newsletter, off for plain.
   track?: boolean;
+  // Free-text grouping — the offer/audience this mail belongs to, e.g. "AI Consulting",
+  // "AI Workshop", "XamBaaz". Deliberately not an enum: typing a new value creates a new
+  // category. Metadata only — never reaches the wire.
+  category?: string | null;
 };
 
 export type RecipientStatus =
