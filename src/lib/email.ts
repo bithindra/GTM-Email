@@ -185,15 +185,16 @@ export async function sendEmail(opts: {
   if (unsubParts.length) headers["List-Unsubscribe"] = unsubParts.join(", ");
   if (opts.recipientId) headers["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";
 
-  // 1. Gmail / SMTP — preferred when configured (lets you send FROM a Gmail address).
+  // 1. SMTP — preferred when configured. Host/port come from the chosen mailbox, so a
+  // Gmail sender (smtp.gmail.com) and a custom-domain sender (e.g. smtp.hostinger.com)
+  // can coexist across campaigns.
   if (mailbox?.user && mailbox?.pass) {
     try {
       const nodemailer = (await import("nodemailer")).default;
-      const port = Number(process.env.SMTP_PORT || 465);
       const transport = nodemailer.createTransport({
-        host: process.env.SMTP_HOST || "smtp.gmail.com",
-        port,
-        secure: port === 465,
+        host: mailbox.host,
+        port: mailbox.port,
+        secure: mailbox.port === 465,
         auth: { user: mailbox.user, pass: mailbox.pass },
       });
       const info = await transport.sendMail({
