@@ -4,10 +4,13 @@
 //   2. MemoryStore.seed()  — seeds them for the no-DATABASE_URL dev/demo mode
 //   3. /api/templates/library — lets the UI add another copy of any preset later
 //
-// Every preset is `plain` format with tracking OFF: no pixel, no link rewriting, reads
-// hand-typed. That scores highest on the deliverability linter and keeps cold mail out
-// of the Promotions tab. Bodies use {{merge_fields}} and {a|b} spintax so no two
-// recipients receive byte-identical mail.
+// Every preset is `plain` format: no heavy styling, reads hand-typed — the best body
+// shape for landing in the Primary tab. Tracking is ON, because the open pixel is the
+// only thing that records an open; with it off the dashboard reports 0% opens no matter
+// how well the mail actually lands, which makes a subject-line problem indistinguishable
+// from a deliverability problem. These mails carry no links, so enabling tracking adds
+// the pixel only — no link rewriting, which is the larger spam signal of the two.
+// Bodies use {{merge_fields}} and {a|b} spintax so no two recipients get identical mail.
 
 export type LibraryTemplate = {
   key: string; // stable id for this preset — never reused, never renamed
@@ -27,7 +30,7 @@ export const TEMPLATE_LIBRARY: LibraryTemplate[] = [
     category: "AI Consulting",
     subject: "{A thought|An idea} on {{company}}'s margins",
     format: "plain",
-    track: false,
+    track: true,
     body: `Hi {{first_name}},
 
 {Short note|Quick note} — I work with mid-size businesses on where AI actually removes cost, not where it looks impressive.
@@ -47,7 +50,7 @@ Bithindra`,
     category: "AI Consulting",
     subject: "{{first_name}}, {doing more|more output} with the same team",
     format: "plain",
-    track: false,
+    track: true,
     body: `Hi {{first_name}},
 
 {A question|One question}, owner to owner: if {{company}} could take on 30% more work without adding headcount, what would you do with it?
@@ -69,7 +72,7 @@ Bithindra`,
     category: "AI Workshop",
     subject: "{Hands-on AI|A working session} for your leadership team",
     format: "plain",
-    track: false,
+    track: true,
     body: `Hi {{first_name}},
 
 Most AI sessions leave a leadership team with slides and no new capability. Mine don't — it's a working day where your team builds with the tools on your own processes and walks out with something running.
@@ -89,7 +92,7 @@ Bithindra`,
     category: "AI Workshop",
     subject: "{{first_name}}, the AI gap {isn't|is not} tooling",
     format: "plain",
-    track: false,
+    track: true,
     body: `Hi {{first_name}},
 
 {Something I keep seeing|A pattern I keep seeing}: a company buys the licences, and six months later almost nobody's daily work has changed. The gap isn't the tooling — it's that no one was shown how to apply it to their own job.
@@ -111,7 +114,7 @@ Bithindra`,
     category: "XamBaaz",
     subject: "{A question|Quick question} on {{company}}'s board results",
     format: "plain",
-    track: false,
+    track: true,
     body: `Hi {{first_name}},
 
 {A quick question|One question} about how {{company}} prepares students for the boards — how do your teachers currently see which chapters a class is weakest in, before the exam rather than after?
@@ -131,7 +134,7 @@ Bithindra`,
     category: "XamBaaz",
     subject: "{{first_name}}, a {no-cost|zero-cost} pilot for one section",
     format: "plain",
-    track: false,
+    track: true,
     body: `Hi {{first_name}},
 
 Rather than make the case in an email, here's an easier way to judge XamBaaz: run it with one section for one term, at no cost.
@@ -153,7 +156,7 @@ Bithindra`,
     category: "General",
     subject: "{Quick|A quick} thought for {{company}}",
     format: "plain",
-    track: false,
+    track: true,
     body: `Hi {{first_name}},
 
 {Quick note|A quick note} — I'll keep it short.
@@ -173,7 +176,7 @@ Bithindra`,
     category: "General",
     subject: "Re: {{company}}",
     format: "plain",
-    track: false,
+    track: true,
     body: `Hi {{first_name}},
 
 {Floating this back to the top of your inbox|Bringing this back up} in case it got buried.
