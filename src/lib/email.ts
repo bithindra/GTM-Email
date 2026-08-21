@@ -228,6 +228,25 @@ export async function sendEmail(opts: {
   return { ok: true, simulated: true, id: "sim_" + Math.random().toString(36).slice(2) };
 }
 
+// Authenticate against a mailbox's SMTP server WITHOUT sending anything. This is the
+// only way to prove a slot's host/port/password are correct — a wrong password shows up
+// here as `535 authentication failed` instead of as a silent campaign-wide failure.
+export async function verifyMailbox(mailbox: { host: string; port: number; user: string; pass: string }): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const nodemailer = (await import("nodemailer")).default;
+    const transport = nodemailer.createTransport({
+      host: mailbox.host,
+      port: mailbox.port,
+      secure: mailbox.port === 465,
+      auth: { user: mailbox.user, pass: mailbox.pass },
+    });
+    await transport.verify();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
 export function previewFor(template: Template, sample: MergeData, recipientId = "preview") {
   const subject = renderTemplate(spin(template.subject, recipientId), sample);
   const bodyText = renderTemplate(spin(template.body, recipientId), sample);
