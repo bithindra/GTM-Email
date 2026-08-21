@@ -69,7 +69,7 @@ Recent proof: a B2B leadership team went from zero to two live automations in on
 
 Why me: 20+ years running P&Ls across media, telecom, banking, and tech (Sr VP, Radio Mirchi; roles at Idea Cellular, ICICI Bank, IBM). MBA from IIM Ahmedabad. Currently Guest Faculty at IIT Bombay and IIM Mumbai/NMIMS, teaching AI & strategy.
 
-If the payback isn't there, I'll tell you — that is a much cheaper answer than a pilot.
+If the payback isn't there, I'll tell you upfront — better to know before a pilot than after one.
 
 Worth 20 minutes to put real numbers against one process at {{company}}?
 
