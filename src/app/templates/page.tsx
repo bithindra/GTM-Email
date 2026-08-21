@@ -45,21 +45,24 @@ Warm regards,
 The Brand Vibe Team`,
 };
 
+// Blank scaffold for "New mail". Deliberately plain — no spintax braces — so the whole
+// body can be selected and replaced with your own copy in one paste. Merge fields stay
+// because they're the part worth keeping.
 const PLAIN_STARTER = {
-  name: "Untitled — cold mail",
-  subject: "{Quick|A quick} thought for {{company}}",
+  name: "Untitled mail",
+  subject: "Subject line here",
   body: `Hi {{first_name}},
 
-{Quick note|A quick note}, founder to founder — I'll keep it short.
+[Opening line — one specific, relevant observation about {{company}}.]
 
-[one specific, relevant line about {{company}}]
+[What you do for them, in one sentence.]
 
-[the single thing you do for them, in one sentence]
+[Proof it works — a concrete result, with a number if you have one.]
 
-{Worth a quick chat|Open to a 15-min call} to see if it's a fit? If not, a one-line "no" is a perfectly good answer.
+[The ask — keep it small, one question.]
 
 Best,
-[Your name]`,
+Bithindra Biswas`,
 };
 
 const fmtOf = (t: Template): Format => t.format || (t.type === "newsletter" ? "newsletter" : "rich");
@@ -147,8 +150,11 @@ export default function TemplatesPage() {
     fetch("/api/templates/library").then((r) => r.json()).then((d) => setLibrary(d.library ?? [])).catch(() => {});
   }, []);
 
+  // New mails default to rich + tracking on — the house style the live mails use, and
+  // the settings their open-rate numbers were measured under. Tracking on by default
+  // means a new mail is never silently unmeasured.
   function newTemplate() {
-    setActive({ id: "", ...PLAIN_STARTER, type: "outreach", format: "plain", track: false, category: active?.category ?? null, updatedAt: "" });
+    setActive({ id: "", ...PLAIN_STARTER, type: "outreach", format: "rich", track: true, category: active?.category ?? null, updatedAt: "" });
   }
   function newNewsletter() {
     setActive({ id: "", ...NEWSLETTER_STARTER, type: "newsletter", format: "newsletter", track: true, category: null, updatedAt: "" });
