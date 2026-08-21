@@ -12,6 +12,21 @@ function humanSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+// Pick the sending mailbox that belongs to a mail's brand, so a XamBaaz mail goes out
+// from a xambaaz address and a Brand Vibe mail from a brandvibe one. Matches the
+// category against the address ("XamBaaz" -> partnerships@xambaaz.com), and prefers a
+// custom-domain mailbox over a free consumer one when both match — the domain sender is
+// authenticated (SPF/DKIM/DMARC) and is what we want used by default.
+const CONSUMER_MAIL = /@(gmail|googlemail|outlook|hotmail|yahoo|live|aol)\./i;
+
+export function mailboxForCategory(category: string | null | undefined, mailboxes: { id: string }[]): string | null {
+  const key = (category || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!key) return null;
+  const matches = mailboxes.filter((m) => m.id.toLowerCase().replace(/[^a-z0-9]/g, "").includes(key));
+  if (!matches.length) return null;
+  return (matches.find((m) => !CONSUMER_MAIL.test(m.id)) ?? matches[0]).id;
+}
+
 // Mails grouped by category, so picking "the XamBaaz one" out of a dozen is immediate.
 // The API already returns them in category order, so one pass preserves it.
 function groupTemplates(templates: Template[]): [string, Template[]][] {
@@ -84,6 +99,16 @@ export default function CampaignModal({
 
   const attachBytes = useMemo(() => attachments.reduce((s, a) => s + a.size, 0), [attachments]);
   const templateGroups = useMemo(() => groupTemplates(templates), [templates]);
+
+  // Follow the mail's brand: choosing a XamBaaz mail selects the XamBaaz sender, a Brand
+  // Vibe mail the Brand Vibe one. Still fully overridable — this only sets the default,
+  // so the wrong brand can't go out simply by forgetting to change the dropdown.
+  const activeTemplate = templates.find((t) => t.id === templateId);
+  useEffect(() => {
+    if (!mailboxes.length || !activeTemplate) return;
+    const want = mailboxForCategory(activeTemplate.category, mailboxes);
+    if (want) setFromMailbox(want);
+  }, [templateId, mailboxes, activeTemplate]);
 
   function readAsBase64(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -202,9 +227,14 @@ export default function CampaignModal({
         {mailboxes.length > 0 && (
           <>
             <label className="text-sm font-semibold block mb-1">Send from</label>
-            <select className="select mb-4" value={fromMailbox} onChange={(e) => setFromMailbox(e.target.value)}>
+            <select className="select" value={fromMailbox} onChange={(e) => setFromMailbox(e.target.value)}>
               {mailboxes.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
             </select>
+            <p className="text-xs text-muted mt-1 mb-4">
+              {CONSUMER_MAIL.test(fromMailbox)
+                ? "Free mailbox — lower inbox placement. Prefer the brand's own domain address."
+                : "Matched to the mail's brand. Sends on your own authenticated domain."}
+            </p>
           </>
         )}
 
