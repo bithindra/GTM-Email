@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Search, FileText, Send, Globe2, ListChecks } from "lucide-react";
+import { LayoutDashboard, Search, FileText, Send, Globe2, ListChecks, ScanSearch } from "lucide-react";
 
 const LINKS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/prospects", label: "Find Founders", icon: Search },
   { href: "/lists", label: "Lists & Upload", icon: ListChecks },
+  { href: "/outreach", label: "Audit Outreach", icon: ScanSearch },
   { href: "/templates", label: "Mail Templates", icon: FileText },
   { href: "/campaigns", label: "Campaigns", icon: Send },
 ];

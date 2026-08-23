@@ -112,4 +112,41 @@ Bithindra Biswas
 Founder & CEO, XamBaaz
 xambaaz.com | linkedin.com/in/bithin`,
   },
+
+  /* ---------------- Maveriko ---------------- */
+  // The audit-outreach mail. Every {{audit field}} is backed by a real Maveriko
+  // scan of that recipient's own site, run before the campaign is created — the
+  // sender REFUSES to send this template to anyone without one (see
+  // hasUnresolvedMerge in email.ts), so it can never go out with blanks.
+  //
+  // Written for a generic inbox: Maps-scraped addresses are overwhelmingly
+  // info@/contact@, so {{first_name}} resolves to "there" and the copy has to
+  // read naturally that way.
+  {
+    key: "maveriko-audit-intro",
+    name: "Maveriko — Free Site Audit",
+    category: "Maveriko",
+    subject: "{{website}} scored {{seo_score}}/100 on search visibility",
+    format: "rich",
+    track: true,
+    body: `Hi {{first_name}},
+
+I ran a free check on {{website}} this week and thought the result was worth passing on.
+
+It scored {{seo_score}}/100 for search visibility and {{geo_score}}/100 for AI readiness — how easily tools like ChatGPT and Google's AI answers can find and quote your business. The AI number is the one most owners have never seen, and it is quietly becoming the one that matters: people increasingly ask an assistant for a recommendation instead of scrolling results.
+
+The single biggest fix on your site right now:
+
+{{top_fix}}
+
+Full report, free, no signup and no card:
+{{report_url}}
+
+That link is yours to keep — pass it to whoever looks after your website. If it's useful and you'd like a hand working through the rest, just reply.
+
+Best,
+Bithindra Biswas
+Maveriko
+maveriko.com`,
+  },
 ];

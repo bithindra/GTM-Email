@@ -1,6 +1,6 @@
 import { v4 as uuid } from "uuid";
 import { getStore, type Store } from "./db";
-import { renderBodyHtml, mergeDataFromProspect, renderTemplate, sendEmail, spin, formatOf, trackOf } from "./email";
+import { renderBodyHtml, mergeDataFromProspect, renderTemplate, sendEmail, spin, formatOf, trackOf, hasUnresolvedMerge } from "./email";
 import { searchProspects, enrichPeople } from "./apollo";
 import { validateAddress } from "./emailcheck";
 import { scanInbox } from "./inbox";
@@ -172,6 +172,11 @@ export async function sendCampaignQueued(
   // Only load the prospects this campaign actually targets (not the whole table).
   const prospects = await store.getProspectsByIds(recipients.map((r) => r.prospectId));
   const pIndex = new Map(prospects.map((p) => [p.id, p]));
+  // Audit scores for the audit-outreach templates. Loaded once for the whole
+  // campaign; empty for every other campaign, which simply never asks for them.
+  const audits = await store.getAuditsByWebsites(
+    [...new Set(prospects.map((p) => p.website).filter((w): w is string => !!w))],
+  );
   const suppressed = await store.suppressedEmails();
 
   // Per-mailbox daily cap (warm-up / anti-throttle). 0 = disabled. Keeps a single
@@ -205,10 +210,20 @@ export async function sendCampaignQueued(
       continue;
     }
 
-    const data = mergeDataFromProspect(p ?? { name: r.name, company: r.company, title: "", city: "", country: "" });
+    const data = mergeDataFromProspect(p ?? { name: r.name, company: r.company, title: "", city: "", country: "" }, audits.get(p?.website || ""));
     // Spin first (per-recipient wording variation), then fill merge fields.
     const subject = renderTemplate(spin(template.subject, r.id), data);
     const bodyText = renderTemplate(spin(template.body, r.id), data);
+    // Last gate before the wire. An audit template whose recipient has no audit
+    // row would otherwise go out reading "your site scored /100" — worse than
+    // not sending at all, and unrecoverable once delivered.
+    const broken = hasUnresolvedMerge(template.subject, subject, data) ?? hasUnresolvedMerge(template.body, bodyText, data);
+    if (broken) {
+      console.warn(`[send] blocked ${r.email}: ${broken}`);
+      await store.markFailed(r.id);
+      stats.skipped++;
+      continue;
+    }
     const html = renderBodyHtml(formatOf(template), trackOf(template), bodyText, r.id);
     const res = await sendEmail({ to: r.email, subject, html, text: bodyText, recipientId: r.id, mailboxId: campaign.fromMailbox, attachments });
     if (res.ok) {
@@ -273,6 +288,9 @@ async function sendFollowupPass(
   const stats: SendStats = { sent: 0, failed: 0, skipped: 0, simulated: false, throttled: 0 };
   const prospects = await store.getProspectsByIds(due.map((d) => d.recipient.prospectId));
   const pIndex = new Map(prospects.map((p) => [p.id, p]));
+  const audits = await store.getAuditsByWebsites(
+    [...new Set(prospects.map((p) => p.website).filter((w): w is string => !!w))],
+  );
   const templates = new Map((await store.getTemplates()).map((t) => [t.id, t]));
   const suppressed = await store.suppressedEmails();
   const attachCache = new Map<string, import("./types").Attachment[]>(); // per-campaign, fetched once
@@ -289,9 +307,15 @@ async function sendFollowupPass(
     const tmpl = tmplId ? templates.get(tmplId) : null;
     if (!tmpl) continue;
     const p = pIndex.get(recipient.prospectId);
-    const data = mergeDataFromProspect(p ?? { name: recipient.name, company: recipient.company, title: "", city: "", country: "" });
+    const data = mergeDataFromProspect(p ?? { name: recipient.name, company: recipient.company, title: "", city: "", country: "" }, audits.get(p?.website || ""));
     const subject = renderTemplate(spin(tmpl.subject, recipient.id), data);
     const bodyText = renderTemplate(spin(tmpl.body, recipient.id), data);
+    const broken = hasUnresolvedMerge(tmpl.subject, subject, data) ?? hasUnresolvedMerge(tmpl.body, bodyText, data);
+    if (broken) {
+      console.warn(`[followup] blocked ${recipient.email}: ${broken}`);
+      stats.skipped++;
+      continue;
+    }
     const html = renderBodyHtml(formatOf(tmpl), trackOf(tmpl), bodyText, recipient.id);
     if (!attachCache.has(campaign.id)) attachCache.set(campaign.id, await store.getCampaignAttachments(campaign.id));
     const res = await sendEmail({ to: recipient.email, subject, html, text: bodyText, recipientId: recipient.id, mailboxId: campaign.fromMailbox, attachments: attachCache.get(campaign.id) });

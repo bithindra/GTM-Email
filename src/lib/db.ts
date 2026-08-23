@@ -1,5 +1,5 @@
 import { v4 as uuid } from "uuid";
-import type { Prospect, Template, Campaign, Recipient, RecipientStatus, List, SourcingRequest, SearchFilters, Attachment } from "./types";
+import type { Prospect, Template, Campaign, Recipient, RecipientStatus, List, SourcingRequest, SearchFilters, Attachment, AuditRecord } from "./types";
 import { TEMPLATE_LIBRARY } from "./templateLibrary";
 
 // Templates list in category order (uncategorised last), newest-edited first inside a
@@ -67,11 +67,24 @@ export interface Store {
   listSourcingRequests(): Promise<SourcingRequest[]>;
   getSourcingRequest(id: string): Promise<SourcingRequest | null>;
   fulfillSourcingRequest(id: string, info: { resultListId: string | null; importedCount: number; note: string; status?: SourcingRequest["status"] }): Promise<void>;
+  // Maveriko audit cache — keyed by the normalized website, so re-scraping the
+  // same area does not re-audit sites we already scored.
+  getAuditsByWebsites(websites: string[]): Promise<Map<string, AuditRecord>>;
+  upsertAudits(rows: AuditRecord[]): Promise<void>;
+  listAudits(limit?: number): Promise<AuditRecord[]>;
 }
 
-// app_meta key recording that the starter mail library has been seeded. Bump the
-// suffix only if a future library revision should be applied to existing databases.
+// Legacy marker: a single key recording that the whole starter library had been
+// seeded. Kept only so existing databases can be migrated to per-key markers.
 const TEMPLATE_LIBRARY_MARKER = "template_library_v1";
+// The keys that shipped under the legacy marker. A database carrying that marker
+// already has these three rows, so they must never be re-inserted.
+const TEMPLATE_LIBRARY_V1_KEYS = ["brandvibe-ai-workshop", "brandvibe-owners-roi", "xambaaz-principal-intro"];
+// Per-preset marker. Seeding one key at a time is what lets a NEW preset reach an
+// existing database without duplicating the ones already there — bumping a single
+// whole-library marker would re-insert every template, including the two with real
+// send history behind them.
+const templateSeedKey = (key: string) => `tpl_seed:${key}`;
 
 /* ---------------- In-memory backend ---------------- */
 class MemoryStore implements Store {
@@ -83,6 +96,7 @@ class MemoryStore implements Store {
   lists: List[] = [];
   listMembers: { listId: string; prospectId: string }[] = [];
   suppressions = new Set<string>(); // lowercased emails that unsubscribed / complained
+  audits = new Map<string, AuditRecord>(); // normalized website -> last audit
 
   constructor() {
     this.seed();
@@ -446,6 +460,22 @@ class MemoryStore implements Store {
     Object.assign(p, patch, { id: p.id });
     return p;
   }
+  async getAuditsByWebsites(websites: string[]) {
+    const out = new Map<string, AuditRecord>();
+    for (const w of websites) {
+      const a = this.audits.get(w);
+      if (a) out.set(w, a);
+    }
+    return out;
+  }
+  async upsertAudits(rows: AuditRecord[]) {
+    for (const r of rows) this.audits.set(r.website, r);
+  }
+  async listAudits(limit = 500) {
+    return [...this.audits.values()]
+      .sort((a, b) => b.checkedAt.localeCompare(a.checkedAt))
+      .slice(0, limit);
+  }
   async sentTodayCount() {
     const today = new Date().toDateString();
     return this.recipients.filter((r) => (r.sentAt && new Date(r.sentAt).toDateString() === today))
@@ -540,19 +570,41 @@ class PgStore implements Store {
       email text PRIMARY KEY, reason text, created_at timestamptz DEFAULT now())`;
     await sql`CREATE TABLE IF NOT EXISTS app_meta (
       key text PRIMARY KEY, value text, created_at timestamptz DEFAULT now())`;
+    // The business's own site, so a sent recipient can be traced back to the
+    // audit that qualified it.
+    await sql`ALTER TABLE prospects ADD COLUMN IF NOT EXISTS website text`;
+    // Maveriko audit cache. `website` is the normalized key from
+    // normalizeWebsite() ("https://host") and is the primary key, so a re-scrape
+    // of the same area re-uses scores instead of re-auditing.
+    await sql`CREATE TABLE IF NOT EXISTS audits (
+      website text PRIMARY KEY, host text, status text,
+      seo_score int, geo_score int, geo_page_score int,
+      seo_band text, geo_band text, audit_id text, report_url text,
+      top_issue text, top_fix text, error text,
+      checked_at timestamptz DEFAULT now())`;
 
-    // Seed the starter mail library exactly once. Guarded by an app_meta marker rather
-    // than "is the templates table empty" so it (a) still fires on a database that
-    // already has templates, and (b) never resurrects a preset the user deleted.
-    const seeded = await sql`SELECT 1 FROM app_meta WHERE key=${TEMPLATE_LIBRARY_MARKER}`;
-    if (!seeded.length) {
-      for (const p of TEMPLATE_LIBRARY) {
-        const type = p.format === "newsletter" ? "newsletter" : "outreach";
-        await sql`INSERT INTO templates (id, name, subject, body, type, format, track, category, updated_at)
-          VALUES (${uuid()}, ${p.name}, ${p.subject}, ${p.body}, ${type}, ${p.format}, ${p.track}, ${p.category}, now())`;
+    // Migrate the legacy whole-library marker to per-key markers, so a database
+    // seeded before this change is not re-seeded with the three presets it has.
+    const legacy = await sql`SELECT 1 FROM app_meta WHERE key=${TEMPLATE_LIBRARY_MARKER}`;
+    if (legacy.length) {
+      for (const k of TEMPLATE_LIBRARY_V1_KEYS) {
+        await sql`INSERT INTO app_meta (key, value) VALUES (${templateSeedKey(k)}, 'migrated')
+          ON CONFLICT (key) DO NOTHING`;
       }
-      await sql`INSERT INTO app_meta (key, value) VALUES (${TEMPLATE_LIBRARY_MARKER}, ${String(TEMPLATE_LIBRARY.length)})
-        ON CONFLICT (key) DO NOTHING`;
+    }
+
+    // Seed each preset exactly once, guarded by its own app_meta marker rather
+    // than "is the templates table empty" so it (a) still fires on a database
+    // that already has templates, (b) never resurrects a preset the user
+    // deleted, and (c) lets a new preset ship to an existing database alone.
+    for (const p of TEMPLATE_LIBRARY) {
+      const marker = templateSeedKey(p.key);
+      const done = await sql`SELECT 1 FROM app_meta WHERE key=${marker}`;
+      if (done.length) continue;
+      const type = p.format === "newsletter" ? "newsletter" : "outreach";
+      await sql`INSERT INTO templates (id, name, subject, body, type, format, track, category, updated_at)
+        VALUES (${uuid()}, ${p.name}, ${p.subject}, ${p.body}, ${type}, ${p.format}, ${p.track}, ${p.category}, now())`;
+      await sql`INSERT INTO app_meta (key, value) VALUES (${marker}, 'seeded') ON CONFLICT (key) DO NOTHING`;
     }
   }
 
@@ -562,6 +614,7 @@ class PgStore implements Store {
       companySize: r.company_size as string, industry: r.industry as string, country: r.country as string,
       city: r.city as string, linkedin: r.linkedin as string, email: (r.email as string) || "",
       emailStatus: (r.email_status as Prospect["emailStatus"]) || "unknown",
+      website: (r.website as string) || undefined,
       createdAt: new Date(r.created_at as string).toISOString(),
     };
   }
@@ -612,14 +665,15 @@ class PgStore implements Store {
     });
     const col = (f: (p: Prospect) => string) => uniq.map(f);
     const rows = await sql`
-      INSERT INTO prospects (id,name,title,company,company_size,industry,country,city,linkedin,email,email_status,created_at)
-      SELECT t.id,t.name,t.title,t.company,t.company_size,t.industry,t.country,t.city,t.linkedin,NULLIF(t.email,''),t.email_status,now()
+      INSERT INTO prospects (id,name,title,company,company_size,industry,country,city,linkedin,email,email_status,website,created_at)
+      SELECT t.id,t.name,t.title,t.company,t.company_size,t.industry,t.country,t.city,t.linkedin,NULLIF(t.email,''),t.email_status,NULLIF(t.website,''),now()
       FROM unnest(
         ${col((p) => p.id)}::text[], ${col((p) => p.name || "")}::text[], ${col((p) => p.title || "")}::text[],
         ${col((p) => p.company || "")}::text[], ${col((p) => p.companySize || "")}::text[], ${col((p) => p.industry || "")}::text[],
         ${col((p) => p.country || "")}::text[], ${col((p) => p.city || "")}::text[], ${col((p) => p.linkedin || "")}::text[],
-        ${col((p) => (p.email || "").toLowerCase())}::text[], ${col((p) => p.emailStatus || "unknown")}::text[]
-      ) AS t(id,name,title,company,company_size,industry,country,city,linkedin,email,email_status)
+        ${col((p) => (p.email || "").toLowerCase())}::text[], ${col((p) => p.emailStatus || "unknown")}::text[],
+        ${col((p) => p.website || "")}::text[]
+      ) AS t(id,name,title,company,company_size,industry,country,city,linkedin,email,email_status,website)
       ON CONFLICT (email) DO NOTHING
       RETURNING *`;
     return rows.map((r) => this.mapProspect(r));
@@ -957,9 +1011,63 @@ class PgStore implements Store {
       company=COALESCE(${patch.company ?? null}, company),
       email=COALESCE(${patch.email ?? null}, email),
       title=COALESCE(${patch.title ?? null}, title),
-      email_status=COALESCE(${patch.emailStatus ?? null}, email_status)
+      email_status=COALESCE(${patch.emailStatus ?? null}, email_status),
+      website=COALESCE(${patch.website ?? null}, website)
       WHERE id=${id} RETURNING *`;
     return rows.length ? this.mapProspect(rows[0]) : null;
+  }
+  private mapAudit(r: Record<string, unknown>): AuditRecord {
+    const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+    return {
+      website: r.website as string,
+      host: (r.host as string) || "",
+      status: (r.status as AuditRecord["status"]) || "failed",
+      seoScore: num(r.seo_score), geoScore: num(r.geo_score), geoPageScore: num(r.geo_page_score),
+      seoBand: (r.seo_band as string) || "", geoBand: (r.geo_band as string) || "",
+      auditId: (r.audit_id as string) || "", reportUrl: (r.report_url as string) || "",
+      topIssue: (r.top_issue as string) || "", topFix: (r.top_fix as string) || "",
+      error: (r.error as string) || "",
+      checkedAt: new Date(r.checked_at as string).toISOString(),
+    };
+  }
+  async getAuditsByWebsites(websites: string[]) {
+    const out = new Map<string, AuditRecord>();
+    if (!websites.length) return out;
+    const sql = await this.db();
+    const rows = await sql`SELECT * FROM audits WHERE website = ANY(${websites}::text[])`;
+    for (const r of rows) {
+      const a = this.mapAudit(r);
+      out.set(a.website, a);
+    }
+    return out;
+  }
+  async upsertAudits(rows: AuditRecord[]) {
+    if (!rows.length) return;
+    const sql = await this.db();
+    const col = <T>(f: (a: AuditRecord) => T) => rows.map(f);
+    // Re-auditing a site overwrites its row: the newest score is the only one
+    // that may reach an email.
+    await sql`
+      INSERT INTO audits (website,host,status,seo_score,geo_score,geo_page_score,seo_band,geo_band,audit_id,report_url,top_issue,top_fix,error,checked_at)
+      SELECT t.website,t.host,t.status,t.seo_score,t.geo_score,t.geo_page_score,t.seo_band,t.geo_band,t.audit_id,t.report_url,t.top_issue,t.top_fix,t.error,now()
+      FROM unnest(
+        ${col((a) => a.website)}::text[], ${col((a) => a.host)}::text[], ${col((a) => a.status)}::text[],
+        ${col((a) => a.seoScore)}::int[], ${col((a) => a.geoScore)}::int[], ${col((a) => a.geoPageScore)}::int[],
+        ${col((a) => a.seoBand)}::text[], ${col((a) => a.geoBand)}::text[], ${col((a) => a.auditId)}::text[],
+        ${col((a) => a.reportUrl)}::text[], ${col((a) => a.topIssue)}::text[], ${col((a) => a.topFix)}::text[],
+        ${col((a) => a.error)}::text[]
+      ) AS t(website,host,status,seo_score,geo_score,geo_page_score,seo_band,geo_band,audit_id,report_url,top_issue,top_fix,error)
+      ON CONFLICT (website) DO UPDATE SET
+        host=EXCLUDED.host, status=EXCLUDED.status, seo_score=EXCLUDED.seo_score,
+        geo_score=EXCLUDED.geo_score, geo_page_score=EXCLUDED.geo_page_score,
+        seo_band=EXCLUDED.seo_band, geo_band=EXCLUDED.geo_band, audit_id=EXCLUDED.audit_id,
+        report_url=EXCLUDED.report_url, top_issue=EXCLUDED.top_issue, top_fix=EXCLUDED.top_fix,
+        error=EXCLUDED.error, checked_at=now()`;
+  }
+  async listAudits(limit = 500) {
+    const sql = await this.db();
+    const rows = await sql`SELECT * FROM audits ORDER BY checked_at DESC LIMIT ${limit}`;
+    return rows.map((r) => this.mapAudit(r));
   }
   async sentTodayCount() {
     const sql = await this.db();

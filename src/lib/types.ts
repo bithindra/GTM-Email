@@ -11,6 +11,9 @@ export type Prospect = {
   email: string;
   emailStatus: "verified" | "guessed" | "unknown";
   createdAt: string;
+  // The business's own website, canonical form "https://host". Set by the audit
+  // outreach flow; joins a prospect to its row in `audits`.
+  website?: string;
   // Optional carriers for Apollo live-search → enrichment (not persisted as columns)
   apolloId?: string;
   firstName?: string;
@@ -119,4 +122,26 @@ export type SearchFilters = {
   revenueRanges?: string[]; // REVENUE_BANDS labels
   keywords: string;
   limit: number;
+};
+
+/**
+ * One Maveriko audit of one business website, cached so a re-scrape of the same
+ * area does not re-audit sites we already scored. `website` is the normalized
+ * key from normalizeWebsite() and is the primary key.
+ */
+export type AuditRecord = {
+  website: string;
+  host: string;
+  status: "ok" | "failed";
+  seoScore: number | null;
+  geoScore: number | null;
+  geoPageScore: number | null;
+  seoBand: string;
+  geoBand: string;
+  auditId: string;
+  reportUrl: string;
+  topIssue: string;
+  topFix: string;
+  error: string;
+  checkedAt: string;
 };

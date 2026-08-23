@@ -1,4 +1,4 @@
-import type { Attachment, Prospect, Recipient, Template } from "./types";
+import type { Attachment, AuditRecord, Prospect, Recipient, Template } from "./types";
 import { resolveMailbox } from "./mailboxes";
 
 export function appUrl(): string {
@@ -15,9 +15,35 @@ type MergeData = {
   title: string;
   city: string;
   country: string;
+  // Audit fields — only populated for audit-outreach campaigns. A template that
+  // uses these and gets no audit row is BLOCKED at send time (see
+  // hasUnresolvedMerge); it never falls back to blanks.
+  website: string;
+  seo_score: string;
+  geo_score: string;
+  seo_band: string;
+  geo_band: string;
+  top_fix: string;
+  report_url: string;
 };
 
-export function mergeDataFromProspect(p: Pick<Prospect, "name" | "company" | "title" | "city" | "country">): MergeData {
+/** The merge keys that require a real audit behind them. */
+export const AUDIT_MERGE_FIELDS = [
+  "website", "seo_score", "geo_score", "seo_band", "geo_band", "top_fix", "report_url",
+] as const;
+
+const BAND_WORDS: Record<string, string> = {
+  excellent: "excellent",
+  good: "good",
+  "needs-work": "needs work",
+  poor: "poor",
+};
+
+export function mergeDataFromProspect(
+  p: Pick<Prospect, "name" | "company" | "title" | "city" | "country">,
+  audit?: AuditRecord | null,
+): MergeData {
+  const ok = audit && audit.status === "ok" && audit.seoScore !== null && audit.geoScore !== null;
   return {
     first_name: (p.name || "").split(" ")[0] || "there",
     name: p.name || "",
@@ -25,11 +51,42 @@ export function mergeDataFromProspect(p: Pick<Prospect, "name" | "company" | "ti
     title: p.title || "",
     city: p.city || "",
     country: p.country || "",
+    // Empty when there is no usable audit. Empty is not a fallback here — it is
+    // the signal hasUnresolvedMerge uses to refuse the send.
+    website: ok ? audit!.host : "",
+    seo_score: ok ? String(audit!.seoScore) : "",
+    geo_score: ok ? String(audit!.geoScore) : "",
+    seo_band: ok ? BAND_WORDS[audit!.seoBand] ?? audit!.seoBand : "",
+    geo_band: ok ? BAND_WORDS[audit!.geoBand] ?? audit!.geoBand : "",
+    top_fix: ok ? audit!.topFix : "",
+    report_url: ok ? audit!.reportUrl : "",
   };
 }
 
 export function renderTemplate(text: string, data: MergeData): string {
   return text.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k: string) => (data as Record<string, string>)[k] ?? `{{${k}}}`);
+}
+
+/**
+ * Would this composed mail embarrass us if it went out?
+ *
+ * Two failure modes, both fatal and both silent without this check:
+ *   1. an unknown key survives rendering literally  -> "you scored {{seo_score}}"
+ *   2. a known key rendered empty                   -> "you scored /100"
+ * Returns the offending reason, or null when the text is safe to send.
+ */
+export function hasUnresolvedMerge(source: string, rendered: string, data: MergeData): string | null {
+  if (/\{\{\s*\w+\s*\}\}/.test(rendered)) {
+    const k = rendered.match(/\{\{\s*(\w+)\s*\}\}/)?.[1] ?? "?";
+    return `unknown merge field {{${k}}}`;
+  }
+  for (const f of AUDIT_MERGE_FIELDS) {
+    // Only fields the template actually asked for matter.
+    if (new RegExp(`\\{\\{\\s*${f}\\s*\\}\\}`).test(source) && !data[f]) {
+      return `no audit data for {{${f}}}`;
+    }
+  }
+  return null;
 }
 
 function hashStr(s: string): number {
@@ -260,6 +317,13 @@ export const SAMPLE_MERGE: MergeData = {
   title: "Founder & CEO",
   city: "San Francisco",
   country: "United States",
+  website: "novalabs.com",
+  seo_score: "48",
+  geo_score: "31",
+  seo_band: "poor",
+  geo_band: "poor",
+  top_fix: "Add an Organization schema block so search engines and AI assistants know who you are.",
+  report_url: "https://maveriko.com/audit/sample",
 };
 
 export type { MergeData, Recipient };

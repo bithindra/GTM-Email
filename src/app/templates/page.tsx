@@ -10,9 +10,18 @@ type Perf = { id: string; campaigns: number; sent: number; opened: number; click
 type Format = "plain" | "rich" | "newsletter";
 
 const MERGE_FIELDS = ["first_name", "name", "company", "title", "city", "country"];
+// Audit fields, backed by a real Maveriko scan of the recipient's own site. Only
+// usable in campaigns built from the Audit Outreach flow — the sender REFUSES to
+// mail anyone whose audit is missing, so a mail using these can never go out with
+// blanks in it. Mirrors AUDIT_MERGE_FIELDS in src/lib/email.ts.
+const AUDIT_FIELDS = ["website", "seo_score", "geo_score", "seo_band", "geo_band", "top_fix", "report_url"];
 const SAMPLE: Record<string, string> = {
   first_name: "Sofia", name: "Sofia Garcia", company: "Nova Labs",
   title: "Founder & CEO", city: "San Francisco", country: "United States",
+  website: "novalabs.com", seo_score: "48", geo_score: "31",
+  seo_band: "poor", geo_band: "poor",
+  top_fix: "Add an Organization schema block so search engines and AI assistants know who you are.",
+  report_url: "https://maveriko.com/audit/sample",
 };
 const BRAND = "Brand Vibe"; // header shown in the newsletter preview (real send uses EMAIL_FROM name)
 
@@ -353,6 +362,15 @@ export default function TemplatesPage() {
                     <button key={f} className="chip" onClick={() => insert(`{{${f}}}`)}>{`{{${f}}}`}</button>
                   ))}
                   <button className="chip" onClick={() => insert("{Hi|Hello|Hey}")} title="Spintax: each recipient gets a random variant"><Sparkles className="w-3 h-3" /> spintax</button>
+                </div>
+                <div className="text-xs text-muted mt-3 mb-2">
+                  Audit fields — Audit Outreach campaigns only. A mail using these is never
+                  sent to anyone whose site hasn&apos;t been scored.
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {AUDIT_FIELDS.map((f) => (
+                    <button key={f} className="chip" onClick={() => insert(`{{${f}}}`)}>{`{{${f}}}`}</button>
+                  ))}
                 </div>
               </div>
               <div className="flex gap-2 pt-1">
