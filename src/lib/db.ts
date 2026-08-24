@@ -45,6 +45,10 @@ export interface Store {
   suppressedEmails(): Promise<Set<string>>; // bounced ∪ unsubscribed — never email these
   deleteRecipients(campaignId: string, ids: string[]): Promise<number>;
   requeueBounced(campaignId: string): Promise<number>; // bounced → queued (retry after a mailbox-limit misfire)
+  // Undo bounces that engagement proves were false: a mail that was opened, clicked or
+  // replied to was demonstrably delivered, so a "bounced" status on it is wrong.
+  // Returns the corrected rows. `dryRun` reports what would change without writing.
+  recoverFalseBounces(dryRun?: boolean): Promise<{ email: string; campaignId: string; evidence: string }[]>;
   recordEvent(recipientId: string, type: "delivered" | "opened" | "clicked" | "replied" | "bounced"): Promise<void>;
   allRecipients(): Promise<Recipient[]>;
   recipientsToReconcile(): Promise<Pick<Recipient, "id" | "email" | "status" | "sentAt">[]>; // lean rows for the inbox scan
@@ -307,6 +311,17 @@ class MemoryStore implements Store {
     for (const e of this.suppressions) out.add(e);
     return out;
   }
+  async recoverFalseBounces(dryRun = false) {
+    const out: { email: string; campaignId: string; evidence: string }[] = [];
+    for (const r of this.recipients) {
+      if (r.status !== "bounced") continue;
+      const ev = r.repliedAt ? "replied" : r.clickedAt ? "clicked" : r.openedAt ? "opened" : "";
+      if (!ev) continue;
+      out.push({ email: r.email, campaignId: r.campaignId, evidence: ev });
+      if (!dryRun) r.status = r.repliedAt ? "replied" : r.clickedAt ? "clicked" : "opened";
+    }
+    return out;
+  }
   async requeueBounced(campaignId: string) {
     let n = 0;
     for (const r of this.recipients) {
@@ -361,7 +376,8 @@ class MemoryStore implements Store {
     if (type === "opened") { r.openedAt ||= now; r.opens += 1; }
     if (type === "clicked") { r.clickedAt ||= now; r.clicks += 1; }
     if (type === "replied") { r.repliedAt ||= now; }
-    if (type === "bounced") { r.status = "bounced"; return; }
+    // A reply outranks a later bounce notice — see the Postgres version for why.
+    if (type === "bounced") { if (!r.repliedAt && r.status !== "replied") r.status = "bounced"; return; }
     if ((rank[type] ?? 0) >= (rank[r.status] ?? 0)) r.status = type as RecipientStatus;
   }
   async allRecipients() {
@@ -838,6 +854,23 @@ class PgStore implements Store {
       SELECT lower(email) AS e FROM suppressions WHERE email IS NOT NULL`;
     return new Set(rows.map((r) => r.e as string));
   }
+  async recoverFalseBounces(dryRun = false) {
+    const sql = await this.db();
+    // Engagement is proof of delivery, so "bounced" on these rows is a false positive.
+    // Restore the status the engagement itself implies rather than guessing.
+    if (dryRun) {
+      const rows = await sql`SELECT email, campaign_id,
+          CASE WHEN replied_at IS NOT NULL THEN 'replied' WHEN clicked_at IS NOT NULL THEN 'clicked' ELSE 'opened' END AS evidence
+        FROM recipients
+        WHERE status='bounced' AND (replied_at IS NOT NULL OR clicked_at IS NOT NULL OR opened_at IS NOT NULL)`;
+      return rows.map((r) => ({ email: r.email as string, campaignId: r.campaign_id as string, evidence: r.evidence as string }));
+    }
+    const rows = await sql`UPDATE recipients SET status =
+        CASE WHEN replied_at IS NOT NULL THEN 'replied' WHEN clicked_at IS NOT NULL THEN 'clicked' ELSE 'opened' END
+      WHERE status='bounced' AND (replied_at IS NOT NULL OR clicked_at IS NOT NULL OR opened_at IS NOT NULL)
+      RETURNING email, campaign_id, status`;
+    return rows.map((r) => ({ email: r.email as string, campaignId: r.campaign_id as string, evidence: r.status as string }));
+  }
   async requeueBounced(campaignId: string) {
     const sql = await this.db();
     const rows = await sql`UPDATE recipients SET status='queued', sent_at=NULL, delivered_at=NULL WHERE campaign_id=${campaignId} AND status='bounced' RETURNING id`;
@@ -891,7 +924,10 @@ class PgStore implements Store {
     if (type === "opened") await sql`UPDATE recipients SET opened_at=COALESCE(opened_at,now()), opens=opens+1, status=CASE WHEN status IN ('queued','sent','delivered') THEN 'opened' ELSE status END WHERE id=${recipientId}`;
     if (type === "clicked") await sql`UPDATE recipients SET clicked_at=COALESCE(clicked_at,now()), clicks=clicks+1, status=CASE WHEN status IN ('queued','sent','delivered','opened') THEN 'clicked' ELSE status END WHERE id=${recipientId}`;
     if (type === "replied") await sql`UPDATE recipients SET replied_at=COALESCE(replied_at,now()), status='replied' WHERE id=${recipientId}`;
-    if (type === "bounced") await sql`UPDATE recipients SET status='bounced' WHERE id=${recipientId}`;
+    // A reply is proof the mail was delivered and read, so it outranks any later bounce
+    // notice — without this guard a notice that merely quotes someone's address could
+    // flip a real reply to "bounced" and erase it from the funnel.
+    if (type === "bounced") await sql`UPDATE recipients SET status='bounced' WHERE id=${recipientId} AND replied_at IS NULL AND status <> 'replied'`;
   }
   async allRecipients() {
     const sql = await this.db();
