@@ -337,7 +337,11 @@ export default function TemplatesPage() {
                     onClick={(e) => { e.stopPropagation(); removeTemplate(t); }}
                     title={`Delete “${t.name}”`}
                     aria-label={`Delete ${t.name}`}
-                    className="absolute top-2 right-2 p-1 rounded text-muted opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-rose-600 hover:bg-rose-50 transition"
+                    // Faintly visible at rest rather than hover-only: the whole problem
+                    // was not being able to find a way to delete, and an invisible
+                    // control repeats that. Also keeps it usable on touch, where there
+                    // is no hover at all.
+                    className="absolute top-2 right-2 p-1 rounded text-slate-300 opacity-70 group-hover:opacity-100 group-hover:text-muted focus:opacity-100 hover:!text-rose-600 hover:bg-rose-50 transition"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
