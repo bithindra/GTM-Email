@@ -7,7 +7,7 @@ import type { Prospect } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-type Incoming = { name?: string; email?: string; website?: string; city?: string; category?: string };
+type Incoming = { name?: string; email?: string; website?: string; city?: string; category?: string; phone?: string };
 
 /**
  * Turn audited businesses into prospects + a named list, applying the score
@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
 
   // 1. Shape and dedupe.
   const seenEmail = new Set<string>();
-  const candidates: { name: string; email: string; website: string; city: string; category: string }[] = [];
+  const candidates: { name: string; email: string; website: string; city: string; category: string; phone: string }[] = [];
   for (const r of rows) {
     const website = normalizeWebsite(r.website);
     if (!website) { skipped.noWebsite++; continue; }
@@ -42,6 +42,7 @@ export async function POST(req: NextRequest) {
       email, website,
       city: String(r.city || "").trim(),
       category: String(r.category || "").trim(),
+      phone: String(r.phone || "").trim(),
     });
   }
 
@@ -90,6 +91,8 @@ export async function POST(req: NextRequest) {
       email: c.email,
       emailStatus: v === "valid" ? "verified" : "unknown",
       website: c.website,
+      // Carried so a saved list can be worked by phone as well as by mail.
+      phone: c.phone || "",
       createdAt: new Date().toISOString(),
     });
   }

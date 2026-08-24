@@ -14,6 +14,9 @@ export type Prospect = {
   // The business's own website, canonical form "https://host". Set by the audit
   // outreach flow; joins a prospect to its row in `audits`.
   website?: string;
+  // Contact number, when the source had one (Maps-scraped leads usually do). Not used
+  // by the mailer — kept so a saved list can also be worked by phone.
+  phone?: string;
   // Optional carriers for Apollo live-search → enrichment (not persisted as columns)
   apolloId?: string;
   firstName?: string;

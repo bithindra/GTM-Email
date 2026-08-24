@@ -573,6 +573,7 @@ class PgStore implements Store {
     // The business's own site, so a sent recipient can be traced back to the
     // audit that qualified it.
     await sql`ALTER TABLE prospects ADD COLUMN IF NOT EXISTS website text`;
+    await sql`ALTER TABLE prospects ADD COLUMN IF NOT EXISTS phone text`;
     // Maveriko audit cache. `website` is the normalized key from
     // normalizeWebsite() ("https://host") and is the primary key, so a re-scrape
     // of the same area re-uses scores instead of re-auditing.
@@ -615,6 +616,7 @@ class PgStore implements Store {
       city: r.city as string, linkedin: r.linkedin as string, email: (r.email as string) || "",
       emailStatus: (r.email_status as Prospect["emailStatus"]) || "unknown",
       website: (r.website as string) || undefined,
+      phone: (r.phone as string) || undefined,
       createdAt: new Date(r.created_at as string).toISOString(),
     };
   }
@@ -665,15 +667,15 @@ class PgStore implements Store {
     });
     const col = (f: (p: Prospect) => string) => uniq.map(f);
     const rows = await sql`
-      INSERT INTO prospects (id,name,title,company,company_size,industry,country,city,linkedin,email,email_status,website,created_at)
-      SELECT t.id,t.name,t.title,t.company,t.company_size,t.industry,t.country,t.city,t.linkedin,NULLIF(t.email,''),t.email_status,NULLIF(t.website,''),now()
+      INSERT INTO prospects (id,name,title,company,company_size,industry,country,city,linkedin,email,email_status,website,phone,created_at)
+      SELECT t.id,t.name,t.title,t.company,t.company_size,t.industry,t.country,t.city,t.linkedin,NULLIF(t.email,''),t.email_status,NULLIF(t.website,''),NULLIF(t.phone,''),now()
       FROM unnest(
         ${col((p) => p.id)}::text[], ${col((p) => p.name || "")}::text[], ${col((p) => p.title || "")}::text[],
         ${col((p) => p.company || "")}::text[], ${col((p) => p.companySize || "")}::text[], ${col((p) => p.industry || "")}::text[],
         ${col((p) => p.country || "")}::text[], ${col((p) => p.city || "")}::text[], ${col((p) => p.linkedin || "")}::text[],
         ${col((p) => (p.email || "").toLowerCase())}::text[], ${col((p) => p.emailStatus || "unknown")}::text[],
-        ${col((p) => p.website || "")}::text[]
-      ) AS t(id,name,title,company,company_size,industry,country,city,linkedin,email,email_status,website)
+        ${col((p) => p.website || "")}::text[], ${col((p) => p.phone || "")}::text[]
+      ) AS t(id,name,title,company,company_size,industry,country,city,linkedin,email,email_status,website,phone)
       ON CONFLICT (email) DO NOTHING
       RETURNING *`;
     return rows.map((r) => this.mapProspect(r));

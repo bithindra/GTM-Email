@@ -2,12 +2,26 @@
 
 import { useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
-import { Loader2, MapPin, Upload, ScanSearch, Rocket, ExternalLink, RefreshCw } from "lucide-react";
+import { Loader2, MapPin, Upload, ScanSearch, Rocket, ExternalLink, RefreshCw, Download } from "lucide-react";
 import type { AuditRecord, List } from "@/lib/types";
 import { GEO_MAX, SEO_MAX } from "@/lib/audit";
 import CampaignModal from "@/components/CampaignModal";
 
-type Business = { name: string; website: string; email: string; city: string; category: string };
+// Everything the Maps scraper gives us. Phone/address/rating/mapsUrl are not used by
+// the email flow, but they are the whole point of a saved list you intend to CALL from,
+// so they are carried through and exported rather than dropped at the mapping step.
+type Business = {
+  name: string;
+  website: string;
+  email: string;
+  city: string;
+  category: string;
+  phone: string;
+  address: string;
+  rating: string;
+  reviews: string;
+  mapsUrl: string;
+};
 
 /** Websites are audited in batches so the browser sees steady progress instead
  *  of one request that looks hung for ten minutes. */
@@ -60,6 +74,11 @@ export default function OutreachPage() {
         email: (Array.isArray(b.emails) ? String(b.emails[0] ?? "") : "").toLowerCase(),
         city: "",
         category: String(b.category || ""),
+        phone: String(b.phone || ""),
+        address: String(b.address || ""),
+        rating: String(b.rating || ""),
+        reviews: String(b.reviews || ""),
+        mapsUrl: String(b.mapsUrl || ""),
       }));
       setBusinesses(rows);
       setAudits({});
@@ -85,6 +104,11 @@ export default function OutreachPage() {
         const mailCol = pickCol(keys, "emails", "email", "emailid", "emailaddress", "mail");
         const cityCol = pickCol(keys, "city", "town", "locality");
         const catCol = pickCol(keys, "category", "type", "businesstype", "industry");
+        const phoneCol = pickCol(keys, "phone", "phonenumber", "mobile", "contact", "contactnumber", "tel");
+        const addrCol = pickCol(keys, "address", "fulladdress", "location", "street");
+        const ratingCol = pickCol(keys, "rating", "stars", "score");
+        const reviewsCol = pickCol(keys, "reviews", "reviewcount", "numreviews", "totalreviews");
+        const mapsCol = pickCol(keys, "mapsurl", "maps", "googlemaps", "mapslink");
         if (!siteCol || !mailCol) {
           setNote("Couldn't find a Website and an Emails column. A CSV from the Maps scraper has both.");
           return;
@@ -96,6 +120,11 @@ export default function OutreachPage() {
           email: String(r[mailCol] ?? "").split(/[;,]/)[0].trim().toLowerCase(),
           city: String(cityCol ? r[cityCol] : "").trim(),
           category: String(catCol ? r[catCol] : "").trim(),
+          phone: String(phoneCol ? r[phoneCol] : "").trim(),
+          address: String(addrCol ? r[addrCol] : "").trim(),
+          rating: String(ratingCol ? r[ratingCol] : "").trim(),
+          reviews: String(reviewsCol ? r[reviewsCol] : "").trim(),
+          mapsUrl: String(mapsCol ? r[mapsCol] : "").trim(),
         }));
         setBusinesses(rows);
         setAudits({});
@@ -181,7 +210,45 @@ export default function OutreachPage() {
     } finally { setBusy(""); }
   }
 
+  /* ---------------- Save the full list ---------------- */
+
+  // Export EVERY business found — not just the mail-qualified ones. A business with a
+  // phone but no email is useless to the mailer and perfectly good to call, so filtering
+  // here would throw away the leads this export exists to keep. Audit columns are filled
+  // in when a scan has run and left blank when it hasn't, so this works before or after
+  // Step 2 and the file has the same shape either way.
+  function downloadCsv() {
+    if (!businesses.length) return;
+    const esc = (v: string | number | null) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const header = [
+      "Name", "Phone", "Email", "Website", "Address", "City", "Category", "Rating", "Reviews",
+      "Maps URL", "SEO score", "AI/GEO score", "SEO band", "GEO band", "Top issue", "Top fix",
+      "Report URL", "Audit status", "Qualified",
+    ].join(",");
+    const qualifiedSet = new Set(buckets.qualified.map((b) => b.website));
+    const rows = businesses.map((b) => {
+      const a = b.website ? lookup(b.website) : undefined;
+      return [
+        esc(b.name), esc(b.phone), esc(b.email), esc(b.website), esc(b.address), esc(b.city),
+        esc(b.category), esc(b.rating), esc(b.reviews), esc(b.mapsUrl),
+        esc(a?.seoScore ?? ""), esc(a?.geoScore ?? ""), esc(a?.seoBand ?? ""), esc(a?.geoBand ?? ""),
+        esc(a?.topIssue ?? ""), esc(a?.topFix ?? ""), esc(a?.reportUrl ?? ""),
+        esc(a ? (a.status === "ok" ? "ok" : a.error || "failed") : "not audited"),
+        esc(b.website && qualifiedSet.has(b.website) ? "yes" : "no"),
+      ].join(",");
+    });
+    // BOM so Excel opens UTF-8 business names correctly instead of mojibake.
+    const blob = new Blob(["﻿" + [header, ...rows].join("\n")], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    const stamp = new Date().toISOString().slice(0, 10);
+    a.download = `${(listName || query || "leads").replace(/[^\w.-]+/g, "_")}_${stamp}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
   const scanned = Object.keys(audits).length;
+  const withPhone = businesses.filter((b) => b.phone).length;
 
   return (
     <div className="space-y-6">
@@ -240,6 +307,21 @@ export default function OutreachPage() {
           </div>
         )}
         {note && <p className="text-sm text-slate-600">{note}</p>}
+
+        {/* Save the raw list the moment it exists — before the audit, so a long scan is
+            never the thing standing between finding leads and keeping them. */}
+        {businesses.length > 0 && (
+          <div className="flex flex-wrap items-center gap-3 pt-1 border-t border-border-soft">
+            <button className="btn mt-3" onClick={downloadCsv}>
+              <Download className="w-4 h-4" /> Download CSV ({businesses.length})
+            </button>
+            <span className="text-xs text-slate-500 mt-3">
+              Every business found, with phone, email, address and Maps link
+              {withPhone > 0 ? ` — ${withPhone} have a phone number to call` : ""}
+              {scanned > 0 ? ", plus the audit scores and report links" : ". Run Step 2 first if you also want audit scores"}.
+            </span>
+          </div>
+        )}
       </div>
 
       {/* 2 — Audit */}
