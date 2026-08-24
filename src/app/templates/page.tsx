@@ -144,12 +144,25 @@ export default function TemplatesPage() {
   const [perf, setPerf] = useState<Record<string, Perf>>({});
   const [library, setLibrary] = useState<LibraryTemplate[]>([]);
   const [showLibrary, setShowLibrary] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
   async function load(selectId?: string) {
-    const d = await fetch("/api/templates").then((r) => r.json());
-    setTemplates(d.templates ?? []);
-    const sel = selectId ? d.templates.find((t: Template) => t.id === selectId) : d.templates?.[0];
-    setActive(sel ?? null);
+    // A failed load used to render as "No mails yet", which is indistinguishable from
+    // an empty account — alarming on its own, and outright dangerous next to a delete
+    // control. Fail loudly and keep whatever was already on screen.
+    try {
+      const res = await fetch("/api/templates");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const d = await res.json();
+      const list: Template[] = d.templates ?? [];
+      setTemplates(list);
+      setLoadError("");
+      const sel = selectId ? list.find((t) => t.id === selectId) : list[0];
+      setActive(sel ?? null);
+    } catch {
+      setLoadError("Couldn’t load your mails — this is a connection problem, not lost data. Reload to try again.");
+      return;
+    }
     fetch("/api/templates/performance").then((r) => r.json())
       .then((p) => setPerf(Object.fromEntries((p.performance ?? []).map((x: Perf) => [x.id, x]))))
       .catch(() => {});
@@ -206,11 +219,25 @@ export default function TemplatesPage() {
     } finally { setSaving(false); }
   }
 
-  async function del() {
-    if (!active?.id) { setActive(null); return; }
-    if (!confirm("Delete this template?")) return;
-    await fetch(`/api/templates?id=${active.id}`, { method: "DELETE" });
+  // Deleting a mail also destroys its performance history — a mail with 1,300 sends
+  // behind it is not the same loss as an untouched draft, so say which one this is
+  // before asking. Campaigns already sent are unaffected; the sender skips a missing
+  // follow-up template rather than erroring.
+  async function removeTemplate(t: Template) {
+    if (!t.id) { setActive(null); return; }
+    const p = perf[t.id];
+    const history = (p?.sent ?? 0) > 0
+      ? `\n\nThis mail has ${p.sent} sends behind it (${Math.round((p.opened / p.sent) * 100)}% open, ${p.replied} repl${p.replied === 1 ? "y" : "ies"}). Deleting it permanently removes that performance history.`
+      : "\n\nIt has no send history, so nothing is lost.";
+    if (!confirm(`Delete “${t.name}”?${history}`)) return;
+    const res = await fetch(`/api/templates?id=${t.id}`, { method: "DELETE" });
+    if (!res.ok) { setLoadError("Could not delete that mail — please try again."); return; }
+    if (active?.id === t.id) setActive(null);
     await load();
+  }
+
+  function del() {
+    if (active) removeTemplate(active);
   }
 
   function insert(snippet: string) {
@@ -288,8 +315,13 @@ export default function TemplatesPage() {
               </div>
               <div className="space-y-1">
                 {items.map((t) => (
-                  <button key={t.id} onClick={() => setActive(t)} title={t.name}
-                    className={`w-full text-left p-3 rounded-lg border text-sm ${active?.id === t.id ? "border-primary bg-indigo-50" : "border-border-soft hover:bg-slate-50"}`}>
+                  // `relative group` so the row can carry its own delete control. The
+                  // editor's Delete button sits below a 13-row textarea and is often off
+                  // screen, which made removing a mail feel impossible — this puts it
+                  // one click away without selecting or scrolling.
+                  <div key={t.id} className="relative group">
+                  <button onClick={() => setActive(t)} title={t.name}
+                    className={`w-full text-left p-3 pr-9 rounded-lg border text-sm ${active?.id === t.id ? "border-primary bg-indigo-50" : "border-border-soft hover:bg-slate-50"}`}>
                     <div className="flex items-center gap-2 font-medium">
                       {fmtOf(t) === "newsletter" ? <Megaphone className="w-4 h-4 text-indigo-500" /> : fmtOf(t) === "plain" ? <Mail className="w-4 h-4 text-emerald-500" /> : <FileText className="w-4 h-4 text-muted" />}
                       <span className="flex-1 truncate">{t.name}</span>
@@ -301,11 +333,22 @@ export default function TemplatesPage() {
                       </div>
                     )}
                   </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); removeTemplate(t); }}
+                    title={`Delete “${t.name}”`}
+                    aria-label={`Delete ${t.name}`}
+                    className="absolute top-2 right-2 p-1 rounded text-muted opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-rose-600 hover:bg-rose-50 transition"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                  </div>
                 ))}
               </div>
             </div>
           ))}
-          {templates.length === 0 && <p className="text-sm text-muted">No mails yet — open the Library to add one.</p>}
+          {loadError
+            ? <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">{loadError}</p>
+            : templates.length === 0 && <p className="text-sm text-muted">No mails yet — open the Library to add one.</p>}
         </div>
 
         {/* Editor */}
