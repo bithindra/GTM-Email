@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { SEND_TIMEZONES } from "@/lib/send-window";
 import { Loader2, Rocket, Clock, Send, Paperclip, X } from "lucide-react";
 import type { Template, List, Attachment } from "@/lib/types";
 
@@ -59,6 +60,7 @@ export default function CampaignModal({
   const [lists, setLists] = useState<List[]>([]);
   const [mailboxes, setMailboxes] = useState<{ id: string; label: string }[]>([]);
   const [fromMailbox, setFromMailbox] = useState("");
+  const [sendTz, setSendTz] = useState<string>(SEND_TIMEZONES[0].id);
   const [name, setName] = useState(defaultName || "");
   const [templateId, setTemplateId] = useState("");
   const [followupTemplateId, setFollowupTemplateId] = useState("");
@@ -79,6 +81,7 @@ export default function CampaignModal({
     if (!open) return;
     setName(defaultName || `Outreach — ${new Date().toLocaleDateString()}`);
     setWhen("now"); setScheduledAt(""); setError(""); setPickedListIds(new Set()); setAttachments([]);
+    setSendTz(SEND_TIMEZONES[0].id);
     fetch("/api/templates").then((r) => r.json()).then((d) => {
       setTemplates(d.templates ?? []);
       if (d.templates?.[0]) setTemplateId((prev) => prev || d.templates[0].id);
@@ -173,7 +176,7 @@ export default function CampaignModal({
       const body: Record<string, unknown> = {
         name, templateId, followupTemplateId: followupTemplateId || null, followupDays,
         followup2TemplateId: (followupTemplateId && followup2TemplateId) || null, followup2Days,
-        fromMailbox: fromMailbox || null, ...tgt,
+        fromMailbox: fromMailbox || null, sendTz, ...tgt,
         attachments: attachments.map((a) => ({ filename: a.filename, contentType: a.contentType, content: a.content })),
       };
       if (when === "schedule") body.scheduledAt = new Date(scheduledAt).toISOString();
@@ -237,6 +240,14 @@ export default function CampaignModal({
             </p>
           </>
         )}
+
+        <label className="text-sm font-semibold block mb-1">Recipients&apos; time zone</label>
+        <select className="select" value={sendTz} onChange={(e) => setSendTz(e.target.value)}>
+          {SEND_TIMEZONES.map((z) => <option key={z.id} value={z.id}>{z.label}</option>)}
+        </select>
+        <p className="text-xs text-muted mt-1 mb-4">
+          Scheduled sends and follow-ups go out Mon–Sat, 9:00–20:00 in this zone — never on a Sunday here or in India.
+        </p>
 
         <label className="text-sm font-semibold block mb-1">Mail to send</label>
         <select className="select mb-4" value={templateId} onChange={(e) => setTemplateId(e.target.value)}>

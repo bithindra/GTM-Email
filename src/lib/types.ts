@@ -95,6 +95,7 @@ export type Campaign = {
   recipientCount: number;
   attachments: Attachment[]; // files sent with every mail in this campaign (incl. follow-ups)
   fromMailbox: string | null; // sending Gmail address (mailbox id); null = primary mailbox
+  sendTz: string | null; // recipients' IANA zone for the send window (see send-window.ts); null = home zone
 };
 
 export type List = {

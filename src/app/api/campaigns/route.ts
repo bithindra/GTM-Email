@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStore } from "@/lib/db";
+import { isSendTz } from "@/lib/send-window";
 
 export const dynamic = "force-dynamic";
 
@@ -61,6 +62,8 @@ export async function POST(req: NextRequest) {
     b.followup2TemplateId || null,
     typeof b.followup2Days === "number" ? b.followup2Days : 7,
     typeof b.fromMailbox === "string" && b.fromMailbox ? b.fromMailbox : null,
+    // Only a listed zone is stored; anything else falls back to the home zone.
+    isSendTz(b.sendTz) ? b.sendTz : null,
   );
   return NextResponse.json({ campaign: c });
 }

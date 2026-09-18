@@ -30,7 +30,7 @@ export interface Store {
   getCampaigns(): Promise<Campaign[]>; // attachments omitted (returned as []) to keep payloads small
   getCampaign(id: string): Promise<Campaign | null>; // attachments omitted — fetch via getCampaignAttachments
   getCampaignAttachments(id: string): Promise<Attachment[]>; // loads the base64 blobs only when sending
-  createCampaign(name: string, templateId: string, prospectIds: string[], followupTemplateId?: string | null, followupDays?: number, scheduledAt?: string | null, attachments?: Attachment[], followup2TemplateId?: string | null, followup2Days?: number, fromMailbox?: string | null): Promise<Campaign>;
+  createCampaign(name: string, templateId: string, prospectIds: string[], followupTemplateId?: string | null, followupDays?: number, scheduledAt?: string | null, attachments?: Attachment[], followup2TemplateId?: string | null, followup2Days?: number, fromMailbox?: string | null, sendTz?: string | null): Promise<Campaign>;
   setCampaignStatus(id: string, status: Campaign["status"]): Promise<void>;
   deleteCampaign(id: string): Promise<void>;
   dueScheduledCampaigns(): Promise<Campaign[]>;
@@ -153,6 +153,7 @@ class MemoryStore implements Store {
       recipientCount: this.prospects.length,
       attachments: [],
       fromMailbox: null,
+      sendTz: null,
     };
     this.campaigns.push(camp);
 
@@ -252,8 +253,8 @@ class MemoryStore implements Store {
   async getCampaignAttachments(id: string) {
     return this.campaigns.find((c) => c.id === id)?.attachments ?? [];
   }
-  async createCampaign(name: string, templateId: string, prospectIds: string[], followupTemplateId: string | null = null, followupDays = 7, scheduledAt: string | null = null, attachments: Attachment[] = [], followup2TemplateId: string | null = null, followup2Days = 7, fromMailbox: string | null = null) {
-    const camp: Campaign = { id: uuid(), name, templateId, followupTemplateId, followupDays, followup2TemplateId, followup2Days, status: scheduledAt ? "scheduled" : "draft", scheduledAt, createdAt: new Date().toISOString(), recipientCount: prospectIds.length, attachments, fromMailbox };
+  async createCampaign(name: string, templateId: string, prospectIds: string[], followupTemplateId: string | null = null, followupDays = 7, scheduledAt: string | null = null, attachments: Attachment[] = [], followup2TemplateId: string | null = null, followup2Days = 7, fromMailbox: string | null = null, sendTz: string | null = null) {
+    const camp: Campaign = { id: uuid(), name, templateId, followupTemplateId, followupDays, followup2TemplateId, followup2Days, status: scheduledAt ? "scheduled" : "draft", scheduledAt, createdAt: new Date().toISOString(), recipientCount: prospectIds.length, attachments, fromMailbox, sendTz };
     this.campaigns.push(camp);
     for (const pid of prospectIds) {
       const p = this.prospects.find((x) => x.id === pid);
@@ -569,6 +570,7 @@ class PgStore implements Store {
     await sql`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS followup2_template_id text`;
     await sql`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS followup2_days int DEFAULT 7`;
     await sql`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS from_mailbox text`;
+    await sql`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS send_tz text`;
     await sql`CREATE TABLE IF NOT EXISTS recipients (
       id text PRIMARY KEY, campaign_id text, prospect_id text, name text, email text, company text,
       status text, sent_at timestamptz, delivered_at timestamptz, opened_at timestamptz,
@@ -661,6 +663,7 @@ class PgStore implements Store {
       recipientCount: (r.rc as number) ?? 0,
       attachments: r.attachments ? (JSON.parse(r.attachments as string) as Attachment[]) : [],
       fromMailbox: (r.from_mailbox as string) || null,
+      sendTz: (r.send_tz as string) || null,
     };
   }
 
@@ -756,7 +759,7 @@ class PgStore implements Store {
   async getCampaigns() {
     const sql = await this.db();
     const rows = await sql`SELECT c.id, c.name, c.template_id, c.followup_template_id, c.followup_days,
-      c.followup2_template_id, c.followup2_days, c.status, c.scheduled_at, c.from_mailbox, c.created_at,
+      c.followup2_template_id, c.followup2_days, c.status, c.scheduled_at, c.from_mailbox, c.send_tz, c.created_at,
       (SELECT count(*)::int FROM recipients r WHERE r.campaign_id=c.id) AS rc
       FROM campaigns c ORDER BY created_at DESC`;
     return rows.map((r) => this.mapCampaign(r));
@@ -764,7 +767,7 @@ class PgStore implements Store {
   async getCampaign(id: string) {
     const sql = await this.db();
     const rows = await sql`SELECT c.id, c.name, c.template_id, c.followup_template_id, c.followup_days,
-      c.followup2_template_id, c.followup2_days, c.status, c.scheduled_at, c.from_mailbox, c.created_at,
+      c.followup2_template_id, c.followup2_days, c.status, c.scheduled_at, c.from_mailbox, c.send_tz, c.created_at,
       (SELECT count(*)::int FROM recipients r WHERE r.campaign_id=c.id) AS rc
       FROM campaigns c WHERE c.id=${id}`;
     if (!rows.length) return null;
@@ -775,13 +778,13 @@ class PgStore implements Store {
     const rows = await sql`SELECT attachments FROM campaigns WHERE id=${id}`;
     return rows.length && rows[0].attachments ? (JSON.parse(rows[0].attachments as string) as Attachment[]) : [];
   }
-  async createCampaign(name: string, templateId: string, prospectIds: string[], followupTemplateId: string | null = null, followupDays = 7, scheduledAt: string | null = null, attachments: Attachment[] = [], followup2TemplateId: string | null = null, followup2Days = 7, fromMailbox: string | null = null) {
+  async createCampaign(name: string, templateId: string, prospectIds: string[], followupTemplateId: string | null = null, followupDays = 7, scheduledAt: string | null = null, attachments: Attachment[] = [], followup2TemplateId: string | null = null, followup2Days = 7, fromMailbox: string | null = null, sendTz: string | null = null) {
     const sql = await this.db();
     const id = uuid();
     const status = scheduledAt ? "scheduled" : "draft";
     const attachmentsJson = attachments.length ? JSON.stringify(attachments) : null;
-    await sql`INSERT INTO campaigns (id,name,template_id,followup_template_id,followup_days,followup2_template_id,followup2_days,status,scheduled_at,attachments,from_mailbox,created_at)
-      VALUES (${id},${name},${templateId},${followupTemplateId},${followupDays},${followup2TemplateId},${followup2Days},${status},${scheduledAt},${attachmentsJson},${fromMailbox},now())`;
+    await sql`INSERT INTO campaigns (id,name,template_id,followup_template_id,followup_days,followup2_template_id,followup2_days,status,scheduled_at,attachments,from_mailbox,send_tz,created_at)
+      VALUES (${id},${name},${templateId},${followupTemplateId},${followupDays},${followup2TemplateId},${followup2Days},${status},${scheduledAt},${attachmentsJson},${fromMailbox},${sendTz},now())`;
     // Bulk-insert all recipients in a single round-trip. Inserting one row per
     // prospect (as before) meant ~2 network calls × N prospects to Neon — a
     // 40-prospect list took ~18s and made the UI look frozen. This is one query.
@@ -790,7 +793,7 @@ class PgStore implements Store {
         SELECT gen_random_uuid()::text, ${id}, p.id, p.name, p.email, p.company, 'queued', 0, 0
         FROM prospects p WHERE p.id = ANY(${prospectIds})`;
     }
-    return { id, name, templateId, followupTemplateId, followupDays, followup2TemplateId, followup2Days, status, scheduledAt, createdAt: new Date().toISOString(), recipientCount: prospectIds.length, attachments, fromMailbox } as Campaign;
+    return { id, name, templateId, followupTemplateId, followupDays, followup2TemplateId, followup2Days, status, scheduledAt, createdAt: new Date().toISOString(), recipientCount: prospectIds.length, attachments, fromMailbox, sendTz } as Campaign;
   }
   async setCampaignStatus(id: string, status: Campaign["status"]) {
     const sql = await this.db();
@@ -804,7 +807,7 @@ class PgStore implements Store {
   async dueScheduledCampaigns() {
     const sql = await this.db();
     const rows = await sql`SELECT c.id, c.name, c.template_id, c.followup_template_id, c.followup_days,
-      c.followup2_template_id, c.followup2_days, c.status, c.scheduled_at, c.from_mailbox, c.created_at,
+      c.followup2_template_id, c.followup2_days, c.status, c.scheduled_at, c.from_mailbox, c.send_tz, c.created_at,
       (SELECT count(*)::int FROM recipients r WHERE r.campaign_id=c.id) AS rc
       FROM campaigns c WHERE c.status='scheduled' AND c.scheduled_at IS NOT NULL AND c.scheduled_at <= now()`;
     return rows.map((r) => this.mapCampaign(r));
@@ -888,7 +891,7 @@ class PgStore implements Store {
     const rows = await sql`
       SELECT r.*, c.id AS c_id, c.name AS c_name, c.template_id AS c_template_id,
              c.followup_template_id AS c_followup_template_id, c.followup_days AS c_followup_days,
-             c.status AS c_status, c.created_at AS c_created_at, c.from_mailbox AS c_from_mailbox
+             c.status AS c_status, c.created_at AS c_created_at, c.from_mailbox AS c_from_mailbox, c.send_tz AS c_send_tz
       FROM recipients r JOIN campaigns c ON c.id = r.campaign_id
       WHERE c.followup_template_id IS NOT NULL
         AND r.followup_sent_at IS NULL
@@ -896,7 +899,7 @@ class PgStore implements Store {
         AND r.status NOT IN ('replied','bounced','queued','failed')
         AND r.sent_at <= now() - (c.followup_days * INTERVAL '1 day')`;
     return rows.map((r) => ({
-      campaign: this.mapCampaign({ id: r.c_id, name: r.c_name, template_id: r.c_template_id, followup_template_id: r.c_followup_template_id, followup_days: r.c_followup_days, status: r.c_status, created_at: r.c_created_at, from_mailbox: r.c_from_mailbox }),
+      campaign: this.mapCampaign({ id: r.c_id, name: r.c_name, template_id: r.c_template_id, followup_template_id: r.c_followup_template_id, followup_days: r.c_followup_days, status: r.c_status, created_at: r.c_created_at, from_mailbox: r.c_from_mailbox, send_tz: r.c_send_tz }),
       recipient: this.mapRecipient(r),
     }));
   }
@@ -906,7 +909,7 @@ class PgStore implements Store {
       SELECT r.*, c.id AS c_id, c.name AS c_name, c.template_id AS c_template_id,
              c.followup_template_id AS c_followup_template_id, c.followup_days AS c_followup_days,
              c.followup2_template_id AS c_followup2_template_id, c.followup2_days AS c_followup2_days,
-             c.status AS c_status, c.created_at AS c_created_at, c.from_mailbox AS c_from_mailbox
+             c.status AS c_status, c.created_at AS c_created_at, c.from_mailbox AS c_from_mailbox, c.send_tz AS c_send_tz
       FROM recipients r JOIN campaigns c ON c.id = r.campaign_id
       WHERE c.followup2_template_id IS NOT NULL
         AND r.followup2_sent_at IS NULL
@@ -914,7 +917,7 @@ class PgStore implements Store {
         AND r.status NOT IN ('replied','bounced','queued','failed')
         AND r.followup_sent_at <= now() - (c.followup2_days * INTERVAL '1 day')`;
     return rows.map((r) => ({
-      campaign: this.mapCampaign({ id: r.c_id, name: r.c_name, template_id: r.c_template_id, followup_template_id: r.c_followup_template_id, followup_days: r.c_followup_days, followup2_template_id: r.c_followup2_template_id, followup2_days: r.c_followup2_days, status: r.c_status, created_at: r.c_created_at, from_mailbox: r.c_from_mailbox }),
+      campaign: this.mapCampaign({ id: r.c_id, name: r.c_name, template_id: r.c_template_id, followup_template_id: r.c_followup_template_id, followup_days: r.c_followup_days, followup2_template_id: r.c_followup2_template_id, followup2_days: r.c_followup2_days, status: r.c_status, created_at: r.c_created_at, from_mailbox: r.c_from_mailbox, send_tz: r.c_send_tz }),
       recipient: this.mapRecipient(r),
     }));
   }

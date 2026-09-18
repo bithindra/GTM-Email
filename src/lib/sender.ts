@@ -4,7 +4,8 @@ import { renderBodyHtml, mergeDataFromProspect, renderTemplate, sendEmail, spin,
 import { searchProspects, enrichPeople } from "./apollo";
 import { validateAddress } from "./emailcheck";
 import { scanInbox } from "./inbox";
-import type { Prospect } from "./types";
+import type { Campaign, Prospect } from "./types";
+import { anySendWindowOpen, withinSendWindow } from "./send-window";
 
 // Auto-fulfill any pending sourcing requests via Apollo (search → reveal emails →
 // save as list). Runs in-app on the dispatcher — no Claude, no Explorium.
@@ -92,38 +93,30 @@ function sendDeadline(): number {
   return Date.now() + Number(process.env.DISPATCH_TIME_BUDGET_MS || 240_000);
 }
 
-// Human-hours guard for the AUTO dispatcher: real people don't blast cold email at
-// 3am (or on a Sunday), and providers weight send-time into spam scoring. Defaults
-// to Mon-Sat, 9:00–20:00 Asia/Kolkata; set SEND_WINDOW_START=0 SEND_WINDOW_END=24
-// and SEND_ON_SUNDAY=1 to disable both. Manual "Send now" bypasses this (it calls
-// sendCampaignQueued directly).
-export function withinSendWindow(now: Date = new Date()): boolean {
-  const tz = process.env.SEND_WINDOW_TZ || "Asia/Kolkata";
-  if (process.env.SEND_ON_SUNDAY !== "1") {
-    const dow = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(now);
-    if (dow === "Sun") return false;
-  }
-  const start = Number(process.env.SEND_WINDOW_START ?? 9);
-  const end = Number(process.env.SEND_WINDOW_END ?? 20);
-  if (start <= 0 && end >= 24) return true;
-  const h = Number(new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", hour12: false }).format(now)) % 24;
-  return h >= start && h < end;
-}
+// The send-window guard lives in ./send-window (shared with the campaign form).
+// Re-exported so existing imports (the health route) keep working.
+export { withinSendWindow } from "./send-window";
 
 // One dispatch pass: send due scheduled campaigns, then due follow-ups, under the daily cap.
 // Safe to call from a cron or an on-app-load tick — only already-due work is sent.
 export async function runDispatch(store: Store = getStore()) {
   const limit = dailyLimit();
   const deadline = sendDeadline();
-  const open = withinSendWindow();
+  const now = new Date();
+  // `open` is the HOME window, reported as before. What actually gates each send is
+  // the campaign's own zone, so a Singapore campaign can go out while India's window
+  // is shut and the other way round. At night everywhere, skip the queries entirely.
+  const open = withinSendWindow(now);
+  const anyOpen = anySendWindowOpen(now);
+  const inWindow = (c: Campaign) => withinSendWindow(now, c.sendTz);
   let budget = Math.max(0, limit - (await store.sentTodayCount()));
   const scheduled: { id: string; name: string; sent: number; throttled: number }[] = [];
   const idle: SendStats & { due: number; budgetLeft: number } = { sent: 0, failed: 0, skipped: 0, simulated: false, throttled: 0, due: 0, budgetLeft: budget };
 
   // Outside business hours the auto-dispatcher holds all sends (everything stays
   // queued); sourcing + inbox scan still run so the app stays current.
-  if (open) {
-    const due = await store.dueScheduledCampaigns();
+  if (anyOpen) {
+    const due = (await store.dueScheduledCampaigns()).filter(inWindow);
     for (const c of due) {
       if (budget <= 0 || Date.now() >= deadline) break;
       const r = await sendCampaignQueued(store, c.id, budget, deadline);
@@ -131,9 +124,9 @@ export async function runDispatch(store: Store = getStore()) {
       scheduled.push({ id: c.id, name: c.name, sent: r.sent, throttled: r.throttled });
     }
   }
-  const fu = open ? await processFollowups(store, budget, deadline) : idle;
+  const fu = anyOpen ? await processFollowups(store, budget, deadline, inWindow) : idle;
   budget = fu.budgetLeft;
-  const fu2 = open ? await processFollowups2(store, budget, deadline) : idle;
+  const fu2 = anyOpen ? await processFollowups2(store, budget, deadline, inWindow) : idle;
   const apollo = await processApolloRequests(store);
   let inbox;
   try { inbox = await scanInbox(store); } catch { /* non-fatal */ }
@@ -261,12 +254,17 @@ export async function sendCampaignQueued(
 }
 
 // Send due follow-ups across all campaigns, up to `budget` emails.
+// `inWindow` (dispatcher only) keeps a follow-up queued until its campaign's own
+// send window opens; `due` then counts only what was sendable now. Manual runs
+// pass no filter and send regardless, like "Send now".
 export async function processFollowups(
   store: Store,
   budget: number,
   deadline: number = sendDeadline(),
+  inWindow?: (c: Campaign) => boolean,
 ): Promise<SendStats & { due: number; budgetLeft: number }> {
-  return sendFollowupPass(store, budget, deadline, await store.dueFollowups(), "first");
+  const due = await store.dueFollowups();
+  return sendFollowupPass(store, budget, deadline, inWindow ? due.filter((d) => inWindow(d.campaign)) : due, "first");
 }
 
 // Send due SECOND follow-ups (the day-N "breakup" mailer after the first follow-up).
@@ -274,8 +272,10 @@ export async function processFollowups2(
   store: Store,
   budget: number,
   deadline: number = sendDeadline(),
+  inWindow?: (c: Campaign) => boolean,
 ): Promise<SendStats & { due: number; budgetLeft: number }> {
-  return sendFollowupPass(store, budget, deadline, await store.dueFollowups2(), "second");
+  const due = await store.dueFollowups2();
+  return sendFollowupPass(store, budget, deadline, inWindow ? due.filter((d) => inWindow(d.campaign)) : due, "second");
 }
 
 async function sendFollowupPass(
