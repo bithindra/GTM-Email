@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { SEND_TIMEZONES } from "@/lib/send-window";
 import { Loader2, Rocket, Clock, Send, Paperclip, X } from "lucide-react";
 import type { Template, List, Attachment } from "@/lib/types";
+import { CONSUMER_MAIL, mailboxForCategory } from "@/lib/mailbox-match";
 
 const MAX_ATTACH_BYTES = 20 * 1024 * 1024; // 20MB total (under Gmail's 25MB)
 
@@ -11,21 +12,6 @@ function humanSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-// Pick the sending mailbox that belongs to a mail's brand, so a XamBaaz mail goes out
-// from a xambaaz address and a Brand Vibe mail from a brandvibe one. Matches the
-// category against the address ("XamBaaz" -> partnerships@xambaaz.com), and prefers a
-// custom-domain mailbox over a free consumer one when both match — the domain sender is
-// authenticated (SPF/DKIM/DMARC) and is what we want used by default.
-const CONSUMER_MAIL = /@(gmail|googlemail|outlook|hotmail|yahoo|live|aol)\./i;
-
-export function mailboxForCategory(category: string | null | undefined, mailboxes: { id: string }[]): string | null {
-  const key = (category || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-  if (!key) return null;
-  const matches = mailboxes.filter((m) => m.id.toLowerCase().replace(/[^a-z0-9]/g, "").includes(key));
-  if (!matches.length) return null;
-  return (matches.find((m) => !CONSUMER_MAIL.test(m.id)) ?? matches[0]).id;
 }
 
 // Mails grouped by category, so picking "the XamBaaz one" out of a dozen is immediate.

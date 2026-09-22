@@ -163,3 +163,32 @@ export async function auditBatch(websites: string[]): Promise<AuditRecord[]> {
   }
   return out;
 }
+
+/**
+ * Audit websites with the 30-day cache in front: fresh `ok` rows are reused, anything
+ * missing, stale or previously failed is re-run and written back. Shared by Audit
+ * Outreach (batches) and the email drafter (one site), so both hit Maveriko the same way.
+ * Takes the store as a parameter to keep this module free of the database import.
+ */
+export async function auditWithCache(
+  store: {
+    getAuditsByWebsites(websites: string[]): Promise<Map<string, AuditRecord>>;
+    upsertAudits(rows: AuditRecord[]): Promise<void>;
+  },
+  websites: string[],
+): Promise<{ results: AuditRecord[]; cached: number; audited: number }> {
+  const wanted = [...new Set(websites.map(normalizeWebsite).filter((w): w is string => !!w))];
+  if (!wanted.length) return { results: [], cached: 0, audited: 0 };
+  const cache = await store.getAuditsByWebsites(wanted);
+  const fresh: AuditRecord[] = [];
+  const toRun: string[] = [];
+  for (const w of wanted) {
+    const hit = cache.get(w);
+    // Re-run failures too: a site that was down last week may be up now.
+    if (hit && hit.status === "ok" && !isStale(hit)) fresh.push(hit);
+    else toRun.push(w);
+  }
+  const ran = toRun.length ? await auditBatch(toRun) : [];
+  if (ran.length) await store.upsertAudits(ran);
+  return { results: [...fresh, ...ran], cached: fresh.length, audited: ran.length };
+}

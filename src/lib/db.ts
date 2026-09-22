@@ -75,6 +75,8 @@ export interface Store {
   // same area does not re-audit sites we already scored.
   getAuditsByWebsites(websites: string[]): Promise<Map<string, AuditRecord>>;
   upsertAudits(rows: AuditRecord[]): Promise<void>;
+  // Atomically add 1 to a named counter and return the new value (e.g. a per-day cap).
+  incrementCounter(key: string): Promise<number>;
   listAudits(limit?: number): Promise<AuditRecord[]>;
 }
 
@@ -100,6 +102,7 @@ class MemoryStore implements Store {
   lists: List[] = [];
   listMembers: { listId: string; prospectId: string }[] = [];
   suppressions = new Set<string>(); // lowercased emails that unsubscribed / complained
+  counters = new Map<string, number>();
   audits = new Map<string, AuditRecord>(); // normalized website -> last audit
 
   constructor() {
@@ -484,6 +487,11 @@ class MemoryStore implements Store {
       if (a) out.set(w, a);
     }
     return out;
+  }
+  async incrementCounter(key: string) {
+    const n = (this.counters.get(key) ?? 0) + 1;
+    this.counters.set(key, n);
+    return n;
   }
   async upsertAudits(rows: AuditRecord[]) {
     for (const r of rows) this.audits.set(r.website, r);
@@ -1081,6 +1089,14 @@ class PgStore implements Store {
       out.set(a.website, a);
     }
     return out;
+  }
+  async incrementCounter(key: string) {
+    const sql = await this.db();
+    // One statement, so two concurrent sends can't both read the old value.
+    const rows = await sql`INSERT INTO app_meta (key, value) VALUES (${key}, '1')
+      ON CONFLICT (key) DO UPDATE SET value = (COALESCE(NULLIF(app_meta.value, ''), '0')::int + 1)::text
+      RETURNING value`;
+    return Number(rows[0]?.value) || 0;
   }
   async upsertAudits(rows: AuditRecord[]) {
     if (!rows.length) return;

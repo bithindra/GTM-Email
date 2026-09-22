@@ -55,6 +55,21 @@ export function withinSendWindow(now: Date = new Date(), tz?: string | null): bo
   }
 }
 
+/**
+ * The standing "never send on Sunday" rule on its own, without the hours check —
+ * for one-off manual sends (the email drafter), where the hour is the sender's call
+ * but Sunday still is not. Honours SEND_ON_SUNDAY=1 like the window does.
+ */
+export function isBlockedSunday(now: Date = new Date(), tz?: string | null): boolean {
+  if (process.env.SEND_ON_SUNDAY === "1") return false;
+  const home = homeTz();
+  try {
+    return weekday(now, home) === "Sun" || (!!tz && weekday(now, tz) === "Sun");
+  } catch {
+    return true; // unusable zone: fail shut, as the window does
+  }
+}
+
 /** True if ANY zone a campaign could use is open — lets the dispatcher skip its queries at night. */
 export const anySendWindowOpen = (now: Date = new Date()) =>
   [homeTz(), ...SEND_TIMEZONES.map((z) => z.id)].some((z) => withinSendWindow(now, z));
