@@ -4,7 +4,7 @@ import { use, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import * as XLSX from "xlsx";
-import { ArrowLeft, Loader2, Trash2, Save, Plus, Rocket, Upload } from "lucide-react";
+import { ArrowLeft, Loader2, Trash2, Save, Plus, Rocket, Upload, FileSpreadsheet } from "lucide-react";
 import type { List, Prospect } from "@/lib/types";
 import CampaignModal from "@/components/CampaignModal";
 
@@ -158,6 +158,11 @@ export default function ListDetail({ params }: { params: Promise<{ id: string }>
             {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />} Append file
             <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.tsv" className="hidden" onChange={onAppendFile} />
           </label>
+          <a href={`/api/lists/${id}/export`} download
+            className={`btn btn-ghost ${members.length === 0 ? "pointer-events-none opacity-50" : ""}`}
+            title="Download every contact in this list as an Excel file">
+            <FileSpreadsheet className="w-4 h-4" /> Download Excel
+          </a>
           <button className="btn btn-primary" disabled={members.length === 0} onClick={() => setShowCampaign(true)}>
             <Rocket className="w-4 h-4" /> Run campaign
           </button>

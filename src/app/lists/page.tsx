@@ -179,6 +179,9 @@ export default function ListsPage() {
                   <td className="p-3">
                     <div className="flex items-center gap-3 justify-end">
                       <Link href={`/lists/${l.id}`} className="btn btn-ghost">View / edit</Link>
+                      <a href={`/api/lists/${l.id}/export`} download className="btn btn-ghost" title="Download every contact in this list as an Excel file">
+                        <FileSpreadsheet className="w-4 h-4" /> Excel
+                      </a>
                       <button className="btn btn-primary" onClick={() => setCampaignFor(l)}><Rocket className="w-4 h-4" /> Campaign</button>
                       <button className="text-muted hover:text-danger" onClick={() => del(l.id)}><Trash2 className="w-4 h-4" /></button>
                     </div>
