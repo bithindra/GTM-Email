@@ -31,6 +31,8 @@ export interface Store {
   getCampaign(id: string): Promise<Campaign | null>; // attachments omitted — fetch via getCampaignAttachments
   getCampaignAttachments(id: string): Promise<Attachment[]>; // loads the base64 blobs only when sending
   createCampaign(name: string, templateId: string, prospectIds: string[], followupTemplateId?: string | null, followupDays?: number, scheduledAt?: string | null, attachments?: Attachment[], followup2TemplateId?: string | null, followup2Days?: number, fromMailbox?: string | null, sendTz?: string | null): Promise<Campaign>;
+  // Back to 'scheduled' at the given time, so the dispatcher resumes it (leftover mail).
+  rescheduleCampaign(id: string, scheduledAt: string): Promise<void>;
   setCampaignStatus(id: string, status: Campaign["status"]): Promise<void>;
   deleteCampaign(id: string): Promise<void>;
   dueScheduledCampaigns(): Promise<Campaign[]>;
@@ -274,6 +276,10 @@ class MemoryStore implements Store {
   async setCampaignStatus(id: string, status: Campaign["status"]) {
     const c = this.campaigns.find((x) => x.id === id);
     if (c) c.status = status;
+  }
+  async rescheduleCampaign(id: string, scheduledAt: string) {
+    const c = this.campaigns.find((x) => x.id === id);
+    if (c) { c.status = "scheduled"; c.scheduledAt = scheduledAt; }
   }
   async deleteCampaign(id: string) {
     this.campaigns = this.campaigns.filter((c) => c.id !== id);
@@ -811,6 +817,10 @@ class PgStore implements Store {
   async setCampaignStatus(id: string, status: Campaign["status"]) {
     const sql = await this.db();
     await sql`UPDATE campaigns SET status=${status} WHERE id=${id}`;
+  }
+  async rescheduleCampaign(id: string, scheduledAt: string) {
+    const sql = await this.db();
+    await sql`UPDATE campaigns SET status='scheduled', scheduled_at=${scheduledAt} WHERE id=${id}`;
   }
   async deleteCampaign(id: string) {
     const sql = await this.db();

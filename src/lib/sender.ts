@@ -84,8 +84,10 @@ const TRANSIENT_SEND_ERROR =
 
 // A subset that is an account-level wall (daily/rate limit). When we hit this there's
 // no point trying the rest of the batch this run — stop and leave them queued.
-const MAILBOX_LIMIT_ERROR =
-  /5\.4\.5|daily .*(?:limit|quota)|sending limit|quota exceeded|rate ?limit exceeded|too many (?:messages|recipients|login)/i;
+// Hostinger words it `451 4.7.1 Ratelimit "hostinger_out_ratelimit" exceeded for key …`,
+// with the limit's name between "Ratelimit" and "exceeded".
+export const MAILBOX_LIMIT_ERROR =
+  /5\.4\.5|daily .*(?:limit|quota)|sending limit|quota exceeded|rate ?limit\b.{0,60}\bexceeded|too many (?:messages|recipients|login)/i;
 
 // Wall-clock budget per dispatch invocation. Stop sending before the serverless
 // function times out; whatever is left stays queued and the next tick continues.
@@ -249,12 +251,13 @@ export async function sendCampaignQueued(
       }
     }
   }
-  // Mail left over (daily cap, mailbox cap, time budget, a transient error) must go out
-  // on a later pass. The dispatcher only picks up 'scheduled' campaigns, so a scheduled
-  // campaign goes back to 'scheduled' and resumes in its next send window. A campaign
-  // sent by hand with no schedule stays 'sending' — it resumes when he presses Send again.
+  // Mail left over (daily cap, mailbox cap, the provider's rate limit, time budget, a
+  // transient error) must still go out. The dispatcher only picks up 'scheduled'
+  // campaigns, so the campaign goes back to 'scheduled' — a hand-sent one gets a
+  // schedule of "now" — and resumes by itself in its next send window, within the caps.
   const pending = stats.throttled > 0 || leftQueued > 0;
-  await store.setCampaignStatus(campaignId, pending ? (campaign.scheduledAt ? "scheduled" : "sending") : "sent");
+  if (pending) await store.rescheduleCampaign(campaignId, campaign.scheduledAt ?? new Date().toISOString());
+  else await store.setCampaignStatus(campaignId, "sent");
   return { ...stats, budgetLeft: left };
 }
 
