@@ -19,6 +19,27 @@ export const maxDuration = 60;
 // 1:1 outreach, and nowhere near enough to be worth abusing.
 const DAILY_CAP = 25;
 
+const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: homeTz() }).format(new Date());
+const dayKey = () => `drafter_sends:${today()}`;
+const sentKey = (to: string) => `drafter_to:${to}`;
+
+/** "Asha Rao <asha@acme.com>" or "mailto:asha@acme.com" → "asha@acme.com". */
+function bareAddress(raw: unknown): string {
+  const s = String(raw || "").trim();
+  const inAngles = s.match(/<([^<>\s]+@[^<>\s]+)>/);
+  return (inAngles ? inAngles[1] : s).replace(/^mailto:/i, "").trim().toLowerCase();
+}
+
+/** What the page shows before anyone presses Send: today's usage and the Sunday block. */
+export async function GET() {
+  try {
+    const sentToday = await getStore().readCounter(dayKey());
+    return NextResponse.json({ sentToday, cap: DAILY_CAP, sundayBlocked: isBlockedSunday() });
+  } catch {
+    return NextResponse.json({ error: "Couldn't read today's send count." }, { status: 503 });
+  }
+}
+
 export async function POST(req: NextRequest) {
   // Same-origin only: the drafter page always sends Origin; a cross-site form or a
   // casual script does not match. Not authentication — a speed bump, with the cap behind it.
@@ -34,7 +55,7 @@ export async function POST(req: NextRequest) {
   const b = await req.json().catch(() => ({}));
   const offering = b.offering as Offering;
   if (!OFFERINGS[offering]) return NextResponse.json({ error: "Unknown offering." }, { status: 400 });
-  const to = String(b.to || "").trim().toLowerCase();
+  const to = bareAddress(b.to);
   const subject = String(b.subject || "").replace(/[\r\n]+/g, " ").trim().slice(0, 200);
   const body = String(b.body || "").trim().slice(0, 20_000);
   if (!subject || !body) return NextResponse.json({ error: "The email needs a subject and a body." }, { status: 400 });
@@ -54,15 +75,20 @@ export async function POST(req: NextRequest) {
   // 3. The standing rule: never send on a Sunday.
   if (isBlockedSunday()) return NextResponse.json({ error: "It's Sunday — sends are blocked. Copy it and send tomorrow." }, { status: 409 });
 
-  // 4. Daily cap, counted per home-zone day. Counted before sending, so a failed send
+  // 4. A second email to the same person is usually a double-click or a forgotten
+  //    earlier send. Ask first; the page re-sends with `again: true` once confirmed.
+  if (!b.again && (await store.readCounter(sentKey(to))) > 0) {
+    return NextResponse.json({ code: "already_sent", error: `You've already emailed ${to} from the drafter.` }, { status: 409 });
+  }
+
+  // 5. Daily cap, counted per home-zone day. Counted before sending, so a failed send
   //    still uses a slot — the conservative side of the trade.
-  const day = new Intl.DateTimeFormat("en-CA", { timeZone: homeTz() }).format(new Date());
-  const used = await store.incrementCounter(`drafter_sends:${day}`);
+  const used = await store.incrementCounter(dayKey());
   if (used > DAILY_CAP) {
     return NextResponse.json({ error: `Daily limit of ${DAILY_CAP} drafter sends reached — copy it and send tomorrow, or use a campaign.` }, { status: 429 });
   }
 
-  // 5. Sender: the one chosen, if it is a real configured mailbox; else the brand's own.
+  // 6. Sender: the one chosen, if it is a real configured mailbox; else the brand's own.
   const boxes = listMailboxes();
   const chosen = boxes.find((m) => m.id === String(b.mailboxId || "").toLowerCase())?.id
     ?? mailboxForCategories(OFFERINGS[offering].categories, boxes)
@@ -73,6 +99,7 @@ export async function POST(req: NextRequest) {
   const html = renderBodyHtml("plain", false, body, "");
   const res = await sendEmail({ to, subject, html, text: body, mailboxId: chosen });
   if (!res.ok) return NextResponse.json({ error: `The mail server refused it: ${res.error}` }, { status: 502 });
+  if (!res.simulated) await store.incrementCounter(sentKey(to)).catch(() => {});
 
   // Remember the person, so a future campaign dedupes against them. Best-effort.
   try {

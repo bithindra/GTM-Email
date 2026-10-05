@@ -7,6 +7,7 @@ import { Search, Loader2, Linkedin, Mail, CheckCircle2, Rocket, Save, Clock, Che
 import type { Prospect, List, SourcingRequest } from "@/lib/types";
 import { INDUSTRY_OPTIONS, SENIORITY_OPTIONS, REVENUE_BANDS } from "@/lib/filters";
 import CampaignModal from "@/components/CampaignModal";
+import { getJson, errorText } from "@/lib/client-fetch";
 
 const COUNTRIES = [
   // Core Western markets
@@ -64,19 +65,24 @@ export default function ProspectsPage() {
   const [existingLists, setExistingLists] = useState<List[]>([]);
   const [requests, setRequests] = useState<SourcingRequest[]>([]);
   const [queuing, setQueuing] = useState(false);
+  const [problem, setProblem] = useState("");
+  const fail = (what: string) => (e: unknown) => setProblem(`${what} ${errorText(e)}`);
 
   async function loadRequests() {
-    const d = await fetch("/api/sourcing").then((r) => r.json());
-    setRequests(d.requests ?? []);
+    try {
+      const d = await getJson<{ requests?: SourcingRequest[] }>("/api/sourcing");
+      setRequests(d.requests ?? []);
+    } catch (e) { fail("Couldn’t load the auto-pull queue — this is a connection problem, not lost data.")(e); }
   }
   useEffect(() => { loadRequests(); }, []);
 
   async function queueAutoPull() {
     if (countries.length === 0 || titles.length === 0) { setListNote("Pick at least one geography and one role."); return; }
     setQueuing(true);
-    setListNote("");
+    setListNote(""); setProblem("");
     try {
-      await fetch("/api/sourcing", {
+      // Only claim "Queued" once the server has confirmed the request was saved.
+      await getJson("/api/sourcing", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ countries, sizes, titles, industries, seniorities, revenueRanges, keywords, limit }),
       });
@@ -85,6 +91,8 @@ export default function ProspectsPage() {
       await fetch("/api/dispatch/tick").catch(() => {});
       await loadRequests();
       setListNote("Done — check the queue below; fulfilled pulls link to their list.");
+    } catch (e) {
+      fail("Not queued — the auto-pull request didn’t save. Try again.")(e);
     } finally { setQueuing(false); }
   }
 
@@ -92,18 +100,20 @@ export default function ProspectsPage() {
     if (countries.length === 0 || titles.length === 0) { setListNote("Pick at least one geography and one role."); return; }
     setLoading(true);
     setSelected(new Set());
-    setListNote("");
+    setListNote(""); setProblem("");
     try {
-      const d = await fetch("/api/search", {
+      const d = await getJson<{ prospects?: Prospect[]; source: string; error?: string; note?: string }>("/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ countries, sizes, titles, industries, seniorities, revenueRanges, keywords, limit }),
-      }).then((r) => r.json());
+      });
       setResults(d.prospects ?? []);
       setSource(d.source);
       if (d.error) setListNote(`Apollo: ${d.error}`);
       else if (d.note) setListNote(`${d.prospects?.length || 0} results. Note: ${d.note}`);
       else if (!d.prospects?.length) setListNote("No matches — widen your filters.");
+    } catch (e) {
+      fail("Search didn’t finish — try again, or narrow the filters / lower Max results.")(e);
     } finally {
       setLoading(false);
     }
@@ -112,11 +122,13 @@ export default function ProspectsPage() {
   async function loadSaved() {
     setLoading(true);
     setSelected(new Set());
-    setListNote("");
+    setListNote(""); setProblem("");
     try {
-      const d = await fetch("/api/prospects").then((r) => r.json());
+      const d = await getJson<{ prospects?: Prospect[] }>("/api/prospects");
       setResults(d.prospects ?? []);
       setSource("saved");
+    } catch (e) {
+      fail("Couldn’t load your saved prospects — this is a connection problem, not lost data.")(e);
     } finally {
       setLoading(false);
     }
@@ -135,12 +147,16 @@ export default function ProspectsPage() {
   }
 
   async function openSaveList() {
-    setListNote("");
+    setListNote(""); setProblem("");
     setNewListName(`${source === "saved" ? "Saved set" : "Prospecting"} — ${new Date().toLocaleDateString()}`);
-    const d = await fetch("/api/lists").then((r) => r.json());
-    setExistingLists(d.lists ?? []);
+    // Existing lists only feed the "add to existing" option — if they don't load, still
+    // allow saving as a new list rather than blocking the save.
+    let lists: List[] = [];
+    try { lists = (await getJson<{ lists?: List[] }>("/api/lists")).lists ?? []; }
+    catch (e) { fail("Couldn’t load your existing lists — you can still save as a new list.")(e); }
+    setExistingLists(lists);
     setSaveMode("new");
-    setExistingListId(d.lists?.[0]?.id ?? "");
+    setExistingListId(lists[0]?.id ?? "");
     setShowSaveList(true);
   }
 
@@ -197,6 +213,8 @@ export default function ProspectsPage() {
         else setListNote(d.error || "Could not save list");
       }
       setShowSaveList(false);
+    } catch {
+      setListNote("Couldn’t save the list — the server didn’t answer. Your selection is still here; try again.");
     } finally {
       setSavingList(false);
     }
@@ -204,8 +222,8 @@ export default function ProspectsPage() {
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
-      <h1 className="text-2xl font-bold">Find B2B Founders</h1>
-      <p className="text-sm text-muted mt-1 mb-6">Search Apollo&apos;s live B2B database by geography, size and role. Pick the ones you want, then <strong>Save as list</strong> to reveal verified emails (1 Apollo credit each).</p>
+      <h1 className="text-2xl font-bold">Find Founders</h1>
+      <p className="text-sm text-muted mt-1 mb-6">Search Apollo&apos;s live B2B database by geography, size and role. Pick the ones you want, then <strong>Save + reveal emails</strong> to save them as a list with verified emails (1 Apollo credit each).</p>
 
       <div className="card p-5 mb-6 space-y-4">
         <div>
@@ -270,6 +288,7 @@ export default function ProspectsPage() {
       </div>
 
       {listNote && <div className="mb-4 p-3 rounded-lg bg-indigo-50 text-indigo-800 text-sm">{listNote}</div>}
+      {problem && <p className="mb-4 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">{problem}</p>}
 
       {/* Auto-pull queue status */}
       {requests.length > 0 && (

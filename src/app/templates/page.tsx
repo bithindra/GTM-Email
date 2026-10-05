@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { FileText, Plus, Save, Trash2, Loader2, Megaphone, Mail, Sparkles, ShieldCheck, AlertTriangle, CheckCircle2, TrendingUp, Copy, Library, X } from "lucide-react";
 import type { Template } from "@/lib/types";
 import type { LibraryTemplate } from "@/lib/templateLibrary";
+import { getJson, errorText } from "@/lib/client-fetch";
 
 type Perf = { id: string; campaigns: number; sent: number; opened: number; clicked: number; replied: number };
 
@@ -145,6 +146,7 @@ export default function TemplatesPage() {
   const [library, setLibrary] = useState<LibraryTemplate[]>([]);
   const [showLibrary, setShowLibrary] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [saveError, setSaveError] = useState("");
 
   async function load(selectId?: string) {
     // A failed load used to render as "No mails yet", which is indistinguishable from
@@ -192,12 +194,14 @@ export default function TemplatesPage() {
     setShowLibrary(false);
     setSaving(true);
     try {
-      const d = await fetch("/api/templates", {
+      const d = await getJson<{ template?: Template }>("/api/templates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: p.name, subject: p.subject, body: p.body, format: p.format, track: p.track, category: p.category }),
-      }).then((r) => r.json());
+      });
       await load(d.template?.id);
+    } catch (e) {
+      setLoadError(`Couldn’t add “${p.name}” from the library: ${errorText(e)}`);
     } finally { setSaving(false); }
   }
 
@@ -209,13 +213,19 @@ export default function TemplatesPage() {
   async function save() {
     if (!active) return;
     setSaving(true);
+    setSaveError("");
+    // A failed save must leave the editor exactly as it is — reloading here used to
+    // select the first mail and silently throw the user's edits away.
     try {
-      const d = await fetch("/api/templates", {
+      const d = await getJson<{ template?: Template }>("/api/templates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: active.id || undefined, name: active.name, subject: active.subject, body: active.body, format: fmtOf(active), track: trackOf(active), category: active.category ?? null }),
-      }).then((r) => r.json());
-      await load(d.template?.id);
+      });
+      if (!d.template?.id) throw new Error("The server didn’t confirm the save — your edits are still here, try again.");
+      await load(d.template.id);
+    } catch (e) {
+      setSaveError(`Not saved — your edits are still here. ${errorText(e)}`);
     } finally { setSaving(false); }
   }
 
@@ -427,6 +437,7 @@ export default function TemplatesPage() {
                 <button className="btn btn-ghost" onClick={duplicate} title="Copy this mail into a new one — then edit and save"><Copy className="w-4 h-4" /> Duplicate</button>
                 <button className="btn btn-ghost" onClick={del}><Trash2 className="w-4 h-4" /> Delete</button>
               </div>
+              {saveError && <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">{saveError}</p>}
             </div>
 
             {/* Live preview + deliverability */}

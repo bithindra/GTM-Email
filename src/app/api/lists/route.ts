@@ -4,8 +4,13 @@ import { getStore } from "@/lib/db";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const lists = await getStore().getLists();
-  return NextResponse.json({ lists });
+  try {
+    const lists = await getStore().getLists();
+    return NextResponse.json({ lists });
+  } catch (e) {
+    console.error("GET /api/lists", e);
+    return NextResponse.json({ error: "Couldn’t reach the database just now — nothing is lost. Reload in a moment." }, { status: 503 });
+  }
 }
 
 // Save a named list from already-existing prospect ids (e.g. a culled search/saved set).

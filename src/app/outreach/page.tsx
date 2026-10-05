@@ -452,7 +452,8 @@ export default function OutreachPage() {
           <p className="text-xs text-slate-400 max-w-3xl">
             Schedule the campaign rather than sending immediately — scheduled mail respects the
             send window (Mon–Sat, 9am–8pm IST), the daily cap and the per-mailbox warm-up limit.
-            &ldquo;Send now&rdquo; bypasses all three.
+            &ldquo;Send now&rdquo; skips the send window — it goes out straight away, even at night
+            or on a Sunday — but still stops at the daily cap and the per-mailbox limit.
           </p>
         </div>
       )}

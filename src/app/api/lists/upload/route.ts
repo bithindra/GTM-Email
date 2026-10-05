@@ -10,8 +10,11 @@ export const dynamic = "force-dynamic";
 //   { name: "EdTech Clients", rows: [{ name, company, email }, ...], checkMx?: true }
 export async function POST(req: NextRequest) {
   const b = await req.json().catch(() => ({}));
-  const listName: string = (b.name || "").trim();
-  const rows: Record<string, unknown>[] = Array.isArray(b.rows) ? b.rows : [];
+  const listName = String(b?.name ?? "").trim();
+  // Skip null / non-object rows — Object.keys(null) below would throw a 500.
+  const rows: Record<string, unknown>[] = Array.isArray(b?.rows)
+    ? b.rows.filter((r: unknown) => !!r && typeof r === "object" && !Array.isArray(r))
+    : [];
   if (!listName) return NextResponse.json({ error: "list name required" }, { status: 400 });
   if (!rows.length) return NextResponse.json({ error: "no rows" }, { status: 400 });
 
@@ -38,7 +41,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Correctness check: syntax + MX-domain verification.
-  const { verdicts, summary } = await verifyEmails(cleaned.map((c) => c.email), { checkMx: b.checkMx !== false });
+  const { verdicts, summary } = await verifyEmails(cleaned.map((c) => c.email), { checkMx: b?.checkMx !== false });
 
   const incoming: Prospect[] = [];
   const rejected: { email: string; reason: string }[] = [];

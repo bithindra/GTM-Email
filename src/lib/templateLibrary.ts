@@ -41,7 +41,7 @@ I run a hands-on AI workshop designed to make teams AI-native—not "AI-aware." 
 
 Recent proof: took a B2B leadership team from zero to two live AI automations in one week, covering lead qualification and internal reporting.
 
-Why me: 20+ years running P&Ls across media, telecom, banking, and tech (Sr VP, Radio Mirchi; roles at Idea Cellular, ICICI Bank, IBM). MBA from IIM Ahmedabad. Currently Guest Faculty at IIT Bombay and IIM Mumbai/NMIMS, teaching AI & strategy.
+Why me: I'm an IIM Ahmedabad alumnus with 20+ years running businesses across media, telecom, banking and technology, guest faculty at IIM Mumbai and IIT Bombay, and a LinkedIn Top Voice.
 
 I don't teach AI as theory—I embed it as a working system your team owns by the end of the session.
 
@@ -67,7 +67,7 @@ I work with owners to find the two or three processes where AI removes real cost
 
 Recent proof: a B2B leadership team went from zero to two live automations in one week, covering lead qualification and internal reporting, with the hours saved showing up the same month.
 
-Why me: 20+ years running P&Ls across media, telecom, banking, and tech (Sr VP, Radio Mirchi; roles at Idea Cellular, ICICI Bank, IBM). MBA from IIM Ahmedabad. Currently Guest Faculty at IIT Bombay and IIM Mumbai/NMIMS, teaching AI & strategy.
+Why me: I'm an IIM Ahmedabad alumnus with 20+ years running businesses across media, telecom, banking and technology, guest faculty at IIM Mumbai and IIT Bombay, and a LinkedIn Top Voice.
 
 If the payback isn't there, I'll tell you upfront — better to know before a pilot than after one.
 
@@ -89,9 +89,9 @@ brandvibe.co.in/ai-services`,
     track: true,
     body: `Dear Principal,
 
-I'm Bithindra Biswas, an IIM Ahmedabad alumnus and faculty at IIT Bombay, with over 20 years of experience across classrooms and education leadership.
+I'm Bithindra Biswas, an IIM Ahmedabad alumnus and guest faculty at IIT Bombay, with over 20 years of experience across classrooms and education leadership.
 
-I built XamBaaz.com to solve a simple gap: students need structured, exam-ready practice that also reinforces what they learn in school. XamBaaz is a mobile-first, AI-driven platform that turns every NCERT chapter into practice for Boards, JEE Main, and NEET, with real negative marking and chapter-wise analytics. We are live with 18,000+ questions across 315 chapters for Classes 8-12.
+I built XamBaaz.com to solve a simple gap: students need structured, exam-ready practice that also reinforces what they learn in school. XamBaaz is a mobile-first, AI-driven platform that turns every NCERT chapter into practice for Boards, JEE Main, and NEET, with real negative marking and chapter-wise analytics. We are live with 30,000+ questions across 410+ chapters for Classes 8-12, plus 115 full-length mock papers.
 
 We are currently offering schools a complimentary pilot.
 

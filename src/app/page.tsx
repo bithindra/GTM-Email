@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { Users, Send, MailOpen, Reply, MousePointerClick, AlertTriangle, ArrowRight, Gauge, Clock } from "lucide-react";
+import { getJson, errorText } from "@/lib/client-fetch";
 
 type Stats = {
   totals: { prospects: number; campaigns: number; sent: number; delivered: number; opened: number; clicked: number; replied: number; bounced: number };
@@ -22,36 +23,43 @@ export default function Dashboard() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [campaigns, setCampaigns] = useState<{ id: string; name: string; status: string; recipientCount: number; createdAt: string }[]>([]);
   const [health, setHealth] = useState<Health | null>(null);
+  const [campaignsLoaded, setCampaignsLoaded] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
     // Load dashboard data immediately. The dispatcher tick runs separately via
     // AutoDispatch (in the layout), so the UI never waits on the ~3.5s tick.
-    fetch("/api/stats").then((r) => r.json()).then(setStats).catch(() => {});
-    fetch("/api/campaigns").then((r) => r.json()).then((d) => setCampaigns(d.campaigns ?? [])).catch(() => {});
-    fetch("/api/health").then((r) => r.json()).then(setHealth).catch(() => {});
+    // A failed load used to read as "No campaigns yet" and a row of zeros — say so.
+    const fail = (e: unknown) => setLoadError(`Couldn’t load the dashboard — this is a connection problem, not lost data. ${errorText(e)}`);
+    getJson<Stats>("/api/stats").then(setStats).catch(fail);
+    getJson<{ campaigns?: typeof campaigns }>("/api/campaigns")
+      .then((d) => { setCampaigns(d.campaigns ?? []); setCampaignsLoaded(true); }).catch(fail);
+    getJson<Health>("/api/health").then(setHealth).catch(fail);
   }, []);
 
   const t = stats?.totals;
   const rt = stats?.rates;
 
   const cards = [
-    { label: "Prospects", value: t?.prospects ?? 0, icon: Users, color: "#6366f1" },
-    { label: "Emails Sent", value: t?.sent ?? 0, icon: Send, color: "#3b82f6" },
-    { label: "Opened", value: t?.opened ?? 0, sub: rt ? `${rt.openRate}% open rate` : "", icon: MailOpen, color: "#f59e0b" },
-    { label: "Clicked", value: t?.clicked ?? 0, sub: rt ? `${rt.clickRate}% CTR` : "", icon: MousePointerClick, color: "#06b6d4" },
-    { label: "Replied", value: t?.replied ?? 0, sub: rt ? `${rt.replyRate}% reply rate` : "", icon: Reply, color: "#10b981" },
-    { label: "Bounced", value: t?.bounced ?? 0, sub: rt ? `${rt.bounceRate}% bounce` : "", icon: AlertTriangle, color: "#ef4444" },
+    { label: "Prospects", value: t?.prospects ?? "—", icon: Users, color: "#6366f1" },
+    { label: "Emails Sent", value: t?.sent ?? "—", icon: Send, color: "#3b82f6" },
+    { label: "Opened", value: t?.opened ?? "—", sub: rt ? `${rt.openRate}% open rate` : "", icon: MailOpen, color: "#f59e0b" },
+    { label: "Clicked", value: t?.clicked ?? "—", sub: rt ? `${rt.clickRate}% CTR` : "", icon: MousePointerClick, color: "#06b6d4" },
+    { label: "Replied", value: t?.replied ?? "—", sub: rt ? `${rt.replyRate}% reply rate` : "", icon: Reply, color: "#10b981" },
+    { label: "Bounced", value: t?.bounced ?? "—", sub: rt ? `${rt.bounceRate}% bounce` : "", icon: AlertTriangle, color: "#ef4444" },
   ];
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold">GTM Dashboard</h1>
+          <h1 className="text-2xl font-bold">Dashboard</h1>
           <p className="text-sm text-muted mt-1">Outreach performance across all campaigns</p>
         </div>
         <Link href="/prospects" className="btn btn-primary">Find founders <ArrowRight className="w-4 h-4" /></Link>
       </div>
+
+      {loadError && <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3 mb-6">{loadError}</p>}
 
       {/* Platform health strip */}
       {health && (
@@ -103,7 +111,7 @@ export default function Dashboard() {
               </div>
               <p className="text-xs text-muted mt-2">Sends auto-pace under this cap (Gmail safety). Remaining rolls to the next dispatch.</p>
             </>
-          ) : <p className="text-sm text-muted">Loading…</p>}
+          ) : <p className="text-sm text-muted">{loadError ? "Not available right now." : "Loading…"}</p>}
         </div>
 
         <div className="card p-5">
@@ -120,7 +128,7 @@ export default function Dashboard() {
                 </Link>
               ))}
             </div>
-          ) : <p className="text-sm text-muted">No upcoming scheduled campaigns.</p>}
+          ) : <p className="text-sm text-muted">{stats ? "No upcoming scheduled campaigns." : loadError ? "Not available right now." : "Loading…"}</p>}
         </div>
       </div>
 
@@ -150,7 +158,8 @@ export default function Dashboard() {
             <Link href="/campaigns" className="text-sm text-primary font-medium">View all</Link>
           </div>
           <div className="space-y-2">
-            {campaigns.length === 0 && <p className="text-sm text-muted">No campaigns yet.</p>}
+            {campaignsLoaded && campaigns.length === 0 && <p className="text-sm text-muted">No campaigns yet.</p>}
+            {!campaignsLoaded && <p className="text-sm text-muted">{loadError ? "Not available right now." : "Loading…"}</p>}
             {campaigns.slice(0, 6).map((c) => (
               <Link key={c.id} href={`/campaigns/${c.id}`} className="flex items-center justify-between p-3 rounded-lg border border-border-soft hover:bg-slate-50">
                 <div>
@@ -199,7 +208,7 @@ export default function Dashboard() {
               </tbody>
             </table>
           </div>
-        ) : <p className="p-6 text-sm text-muted">No campaigns yet.</p>}
+        ) : <p className="p-6 text-sm text-muted">{stats ? "No campaigns yet." : loadError ? "Not available right now." : "Loading…"}</p>}
       </div>
     </div>
   );

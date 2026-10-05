@@ -77,6 +77,8 @@ export interface Store {
   upsertAudits(rows: AuditRecord[]): Promise<void>;
   // Atomically add 1 to a named counter and return the new value (e.g. a per-day cap).
   incrementCounter(key: string): Promise<number>;
+  // Current value of a counter without changing it (0 when it was never incremented).
+  readCounter(key: string): Promise<number>;
   listAudits(limit?: number): Promise<AuditRecord[]>;
 }
 
@@ -111,7 +113,7 @@ class MemoryStore implements Store {
 
   private seed() {
     const now = Date.now();
-    // The starter mail library — same 8 presets the Postgres backend seeds.
+    // The starter mail library — the same presets the Postgres backend seeds.
     this.templates = TEMPLATE_LIBRARY.map((p) => ({
       id: uuid(),
       name: p.name,
@@ -492,6 +494,9 @@ class MemoryStore implements Store {
     const n = (this.counters.get(key) ?? 0) + 1;
     this.counters.set(key, n);
     return n;
+  }
+  async readCounter(key: string) {
+    return this.counters.get(key) ?? 0;
   }
   async upsertAudits(rows: AuditRecord[]) {
     for (const r of rows) this.audits.set(r.website, r);
@@ -1096,6 +1101,11 @@ class PgStore implements Store {
     const rows = await sql`INSERT INTO app_meta (key, value) VALUES (${key}, '1')
       ON CONFLICT (key) DO UPDATE SET value = (COALESCE(NULLIF(app_meta.value, ''), '0')::int + 1)::text
       RETURNING value`;
+    return Number(rows[0]?.value) || 0;
+  }
+  async readCounter(key: string) {
+    const sql = await this.db();
+    const rows = await sql`SELECT value FROM app_meta WHERE key=${key}`;
     return Number(rows[0]?.value) || 0;
   }
   async upsertAudits(rows: AuditRecord[]) {

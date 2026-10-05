@@ -1,5 +1,24 @@
 // Shared shortlisting options for Find Founders (UI) + Apollo query (server).
 
+import type { SearchFilters } from "./types";
+
+// Request body → SearchFilters. A non-array field (e.g. `titles: "CEO"`) used to reach
+// Apollo/the DB as-is and blow up later on `.map`/`.join`; coerce it here instead.
+const strArr = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+export function filtersFromBody(b: Record<string, unknown>): SearchFilters {
+  const limit = Number(b.limit);
+  return {
+    countries: strArr(b.countries),
+    sizes: strArr(b.sizes),
+    titles: strArr(b.titles),
+    industries: strArr(b.industries),
+    seniorities: strArr(b.seniorities),
+    revenueRanges: strArr(b.revenueRanges),
+    keywords: typeof b.keywords === "string" ? b.keywords : "",
+    limit: Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 25,
+  };
+}
+
 export const INDUSTRY_OPTIONS = [
   "SaaS", "Software", "Information Technology", "Cybersecurity", "Artificial Intelligence",
   "Fintech", "Financial Services", "Banking", "Insurance", "Venture Capital & PE",

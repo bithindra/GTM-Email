@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { Send, Loader2, RefreshCw, ArrowLeft, Reply, Eye, Trash2, X, Mail, Download } from "lucide-react";
 import StatusBadge from "@/components/StatusBadge";
 import type { Campaign, Recipient, Template } from "@/lib/types";
+import { getJson, errorText, FetchError } from "@/lib/client-fetch";
 
 type PreviewData = {
   to: string; name: string;
@@ -29,14 +30,25 @@ export default function CampaignDetail({ params }: { params: Promise<{ id: strin
   const [preview, setPreview] = useState<PreviewData | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [filter, setFilter] = useState<"sent" | "delivered" | "opened" | "clicked" | "replied" | null>(null);
+  const [problem, setProblem] = useState("");
+  const [notFound, setNotFound] = useState(false);
 
+  // A failed or 404 load used to leave the page on "Loading…" forever. Keep whatever
+  // is already on screen and say what went wrong.
   const load = useCallback(async () => {
-    const d = await fetch(`/api/campaigns/${id}`).then((r) => r.json());
-    setCampaign(d.campaign);
-    setRecipients(d.recipients ?? []);
-    setTemplate(d.template ?? null);
-    setSel(new Set());
+    try {
+      const d = await getJson<{ campaign: Campaign; recipients?: Recipient[]; template?: Template }>(`/api/campaigns/${id}`);
+      setCampaign(d.campaign);
+      setRecipients(d.recipients ?? []);
+      setTemplate(d.template ?? null);
+      setSel(new Set());
+      setProblem("");
+    } catch (e) {
+      if (e instanceof FetchError && e.status === 404) { setNotFound(true); return; }
+      setProblem(`Couldn’t load this campaign — this is a connection problem, not lost data. ${errorText(e)}`);
+    }
   }, [id]);
+  const fail = (what: string) => (e: unknown) => setProblem(`${what} ${errorText(e)}`);
 
   function toggleSel(rid: string) {
     setSel((prev) => { const n = new Set(prev); n.has(rid) ? n.delete(rid) : n.add(rid); return n; });
@@ -52,18 +64,19 @@ export default function CampaignDetail({ params }: { params: Promise<{ id: strin
   async function deleteSelected() {
     if (sel.size === 0) return;
     if (!confirm(`Remove ${sel.size} recipient(s) from this campaign? They won't be emailed.`)) return;
-    await fetch(`/api/campaigns/${id}/recipients`, {
-      method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: [...sel] }),
-    });
+    try {
+      await getJson(`/api/campaigns/${id}/recipients`, {
+        method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: [...sel] }),
+      });
+    } catch (e) { fail("Couldn’t remove those recipients — they’re still in the campaign.")(e); return; }
     load();
   }
   async function openPreview(rid: string) {
     setPreviewLoading(true);
     setPreview(null);
     try {
-      const d = await fetch(`/api/campaigns/${id}/recipients/${rid}/preview`).then((r) => r.json());
-      setPreview(d);
-    } finally { setPreviewLoading(false); }
+      setPreview(await getJson<PreviewData>(`/api/campaigns/${id}/recipients/${rid}/preview`));
+    } catch (e) { fail("Couldn’t load the preview.")(e); } finally { setPreviewLoading(false); }
   }
 
   useEffect(() => { load(); }, [load]);
@@ -78,35 +91,39 @@ export default function CampaignDetail({ params }: { params: Promise<{ id: strin
 
   async function send() {
     setSending(true);
-    setNotice("");
+    setNotice(""); setProblem("");
     try {
-      const d = await fetch(`/api/campaigns/${id}/send`, { method: "POST" }).then((r) => r.json());
+      const d = await getJson<{ sent: number; failed?: number; simulated?: boolean }>(`/api/campaigns/${id}/send`, { method: "POST" });
       setNotice(d.simulated ? `Simulated ${d.sent} sends (add RESEND_API_KEY to send for real).` : `Sent ${d.sent} emails${d.failed ? `, ${d.failed} failed` : ""}.`);
+      await load();
+    } catch (e) {
+      // Some mails may have gone out before the request died — reload so the table shows them.
+      fail("Sending didn’t confirm — some mails may already have gone out. Check the table below before sending again.")(e);
       await load();
     } finally { setSending(false); }
   }
 
   async function syncInbox() {
     setSending(true);
-    setNotice("");
+    setNotice(""); setProblem("");
     try {
-      const d = await fetch("/api/inbox/scan").then((r) => r.json());
+      const d = await getJson<{ enabled?: boolean; error?: string; replies: number; bounces: number; scanned: number }>("/api/inbox/scan");
       if (!d.enabled) setNotice("Inbox sync needs Gmail SMTP configured.");
       else if (d.error) setNotice(`Inbox sync error: ${d.error}`);
       else setNotice(`Inbox synced — ${d.replies} repl${d.replies === 1 ? "y" : "ies"}, ${d.bounces} bounce(s) detected (scanned ${d.scanned}).`);
       await load();
-    } finally { setSending(false); }
+    } catch (e) { fail("Inbox sync failed.")(e); } finally { setSending(false); }
   }
 
   async function runFollowups() {
     setSending(true);
-    setNotice("");
+    setNotice(""); setProblem("");
     try {
-      const d = await fetch(`/api/campaigns/${id}/followup`, { method: "POST" }).then((r) => r.json());
+      const d = await getJson<{ error?: string; sent?: number; due?: number }>(`/api/campaigns/${id}/followup`, { method: "POST" });
       if (d.error) setNotice(d.error);
       else setNotice(d.sent ? `Sent ${d.sent} follow-up${d.sent > 1 ? "s" : ""}.` : `No follow-ups due yet (${d.due ?? 0} pending the ${campaign?.followupDays}-day wait).`);
       await load();
-    } finally { setSending(false); }
+    } catch (e) { fail("Follow-ups didn’t confirm — check the table before running them again.")(e); await load(); } finally { setSending(false); }
   }
 
   async function deleteCampaign() {
@@ -117,20 +134,22 @@ export default function CampaignDetail({ params }: { params: Promise<{ id: strin
     if (!confirm(msg)) return;
     setSending(true);
     try {
-      await fetch(`/api/campaigns/${id}`, { method: "DELETE" });
+      await getJson(`/api/campaigns/${id}`, { method: "DELETE" });
       router.push("/campaigns");
+    } catch (e) {
+      fail(scheduled ? "Couldn’t cancel — the campaign is still scheduled." : "Couldn’t delete — the campaign is still there.")(e);
     } finally { setSending(false); }
   }
 
   async function retryBounced() {
     setSending(true);
-    setNotice("");
+    setNotice(""); setProblem("");
     try {
-      const d = await fetch(`/api/campaigns/${id}/requeue`, { method: "POST" }).then((r) => r.json());
+      const d = await getJson<{ error?: string; requeued?: number }>(`/api/campaigns/${id}/requeue`, { method: "POST" });
       if (d.error) setNotice(d.error);
       else setNotice(d.requeued ? `Re-queued ${d.requeued} bounced recipient(s) — they'll resend within the mailbox's daily limit.` : "No bounced recipients to retry.");
       await load();
-    } finally { setSending(false); }
+    } catch (e) { fail("Couldn’t re-queue the bounced recipients.")(e); } finally { setSending(false); }
   }
 
   // Export the current (filtered) recipient view as CSV — for reporting or CRM import.
@@ -149,11 +168,26 @@ export default function CampaignDetail({ params }: { params: Promise<{ id: strin
   }
 
   async function markReplied(rid: string) {
-    await fetch(`/api/recipients/${rid}/event`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "replied" }) });
+    try {
+      await getJson(`/api/recipients/${rid}/event`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "replied" }) });
+    } catch (e) { fail("Couldn’t mark that recipient as replied.")(e); return; }
     await load();
   }
 
-  if (!campaign) return <div className="p-8 text-muted">Loading…</div>;
+  if (!campaign) {
+    if (notFound) return (
+      <div className="p-8 max-w-6xl mx-auto">
+        <p className="text-muted mb-3">This campaign doesn’t exist — it may have been deleted.</p>
+        <Link href="/campaigns" className="text-sm text-primary flex items-center gap-1"><ArrowLeft className="w-4 h-4" /> Back to Campaigns</Link>
+      </div>
+    );
+    if (problem) return (
+      <div className="p-8 max-w-6xl mx-auto">
+        <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">{problem}</p>
+      </div>
+    );
+    return <div className="p-8 text-muted">Loading…</div>;
+  }
 
   const counts = {
     sent: recipients.filter((r) => r.sentAt).length,
@@ -213,6 +247,7 @@ export default function CampaignDetail({ params }: { params: Promise<{ id: strin
       </div>
 
       {notice && <div className="mb-5 p-3 rounded-lg bg-indigo-50 text-indigo-800 text-sm">{notice}</div>}
+      {problem && <p className="mb-5 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">{problem}</p>}
 
       {/* Stat strip — click a card to filter the recipients list to those clients */}
       <div className="grid grid-cols-5 gap-3 mb-6">

@@ -155,7 +155,7 @@ export function compose(input: ComposeInput): Draft {
       paras.push(
         roleLine((t, c) => `As ${t} at ${c}, you'll know the hard part isn't buying AI tools — it's getting people to use them on real work.`),
         siteLine(),
-        "Most AI workshops end with a slide deck and good intentions. Mine end with your team building working automations on their own use cases — sales, marketing, operations, support — inside the session.",
+        "Most AI workshops end with a slide deck and good intentions. Ours end with your team building working automations on their own use cases — sales, marketing, operations, support — inside the session.",
         "They leave with something running, not another framework to file away.",
         `A little about me: ${f.credentials}.`,
         "Worth a 20-minute call to shape a format around how your team actually works?",
@@ -191,8 +191,8 @@ export function compose(input: ComposeInput): Draft {
       subject = withCompany(`A faster SEO + AI-readiness audit for ${companyName}'s clients`, "A faster SEO + AI-readiness audit for your clients");
       paras.push(
         role === "agency" && companyName ? `Since ${companyName} works on clients' websites, this may save your team a few hours a week.` : "",
-        `Maveriko audits any page for SEO and AI readiness in ${f.seconds}: ${f.checks}, two scores, and the exact fix for every check that fails. There's also a competitor gap report against up to three rivals.`,
-        `It's free to try with no signup, and Pro is ${f.price} for unlimited scans.`,
+        `Maveriko audits any page for SEO and AI readiness in ${f.seconds}: ${f.checks}, two scores, and a clear fix for each check that fails. There's also ${f.compare}.`,
+        `${f.freeTier}. ${f.pro}.`,
         hasScores
           ? `As a quick example, I ran ${where} through it: ${audit!.seoScore}/100 for search and ${audit!.geoScore}/100 for AI readiness.${audit!.reportUrl ? ` Full report: ${audit!.reportUrl}` : ""}`
           : "",
@@ -212,7 +212,7 @@ export function compose(input: ComposeInput): Draft {
       subject = `A free search and AI-readiness check for ${where}`;
       paras.push(
         siteLine(),
-        `Maveriko checks any page for search visibility and AI readiness — how easily tools like ChatGPT and Google's AI answers can read and quote it — and shows the exact fix for every check that fails. It takes ${f.seconds} and it's free, with no signup.`,
+        `Maveriko checks any page for search visibility and AI readiness — how easily tools like ChatGPT and Google's AI answers can read and quote it — and shows what to fix first. It takes ${f.seconds}. ${f.freeTier}.`,
         `You can run it on ${where} here: ${f.url}`,
         "If the result is useful and you'd like a hand with the fixes, just reply.",
       );
@@ -229,8 +229,8 @@ export function compose(input: ComposeInput): Draft {
       paras.push(
         roleLine((t, c) => `As ${t} at ${c}, you'll know how much steady practice decides exam results.`),
         f.founder,
-        `Students often understand a chapter in class but lose marks under exam pressure. XamBaaz gives them timed, exam-style practice: ${f.boardPapers}, ${f.entrance} with real exam marking, and a step-by-step solution for every question.`,
-        "Every chapter also has a free revision page and quizzes at three levels, so students can practise at their own pace.",
+        `Students often understand a chapter in class but lose marks under exam pressure. XamBaaz gives them timed, exam-style practice: ${f.boardPapers}, ${f.entrance} with ${f.marking}, and ${f.solutions}.`,
+        `${f.revision}, so students can practise at their own pace.`,
         pilotLine,
         "Could we schedule a 15-minute call next week to walk you through it?",
       );
@@ -275,5 +275,41 @@ export function toTemplate(text: string, person: Pick<Person, "firstName">, comp
     const esc = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     out = out.replace(new RegExp(`(?<![\\w])${esc}(?![\\w])`, "g"), to);
   }
+  return out;
+}
+
+/**
+ * The reusable version of a draft, for "Save as template". Recomposed rather than
+ * search-and-replaced: their job title, homepage quote and audit scores are true of
+ * this one person only, and a template goes to everyone on a list. What remains is
+ * the angle's argument, the product facts and a {{first_name}} greeting (the campaign
+ * sender fills it, or "there" when a contact has no name). XamBaaz keeps "Dear
+ * Principal," — "Dear there," would read as a mail-merge accident.
+ */
+export function templateDraft(offering: Offering, angle: string): { subject: string; body: string } {
+  const d = compose({
+    offering,
+    angle,
+    person: { name: "", firstName: offering === "xambaaz" ? "" : "{{first_name}}", headline: "", about: "", companyHint: "" },
+    company: { name: "", website: "", host: "", tagline: "", hasBlog: false },
+    audit: null,
+  });
+  return { subject: d.subject, body: d.body };
+}
+
+/**
+ * Facts in a hand-edited draft that are true of this one person only — so saving it
+ * as a template would send them to everyone. Plain-English labels for a warning.
+ */
+export function personalLeftovers(text: string, input: ComposeInput): string[] {
+  const out: string[] = [];
+  const title = cleanTitle(input.person.headline);
+  const tagline = quotable(input.company.tagline);
+  const has = (s: string) => s.length >= 3 && text.toLowerCase().includes(s.toLowerCase());
+  if (title && has(`As ${title}`)) out.push("their job title");
+  if (tagline && has(tagline)) out.push("the line quoted from their website");
+  if (input.company.host && has(input.company.host)) out.push("their website address");
+  const a = input.audit;
+  if (a && ((a.reportUrl && has(a.reportUrl)) || (a.seoScore !== null && has(`${a.seoScore}/100`)))) out.push("their audit scores");
   return out;
 }

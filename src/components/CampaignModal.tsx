@@ -5,6 +5,7 @@ import { SEND_TIMEZONES } from "@/lib/send-window";
 import { Loader2, Rocket, Clock, Send, Paperclip, X } from "lucide-react";
 import type { Template, List, Attachment } from "@/lib/types";
 import { CONSUMER_MAIL, mailboxForCategory } from "@/lib/mailbox-match";
+import { getJson, errorText } from "@/lib/client-fetch";
 
 const MAX_ATTACH_BYTES = 20 * 1024 * 1024; // 20MB total (under Gmail's 25MB)
 
@@ -59,6 +60,10 @@ export default function CampaignModal({
   const [attachments, setAttachments] = useState<(Attachment & { size: number })[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  // Set when the campaign was created but its first send didn't confirm — the modal
+  // then offers to open it instead of creating a duplicate on retry.
+  const [createdId, setCreatedId] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const needsListPicker = !target;
@@ -68,17 +73,21 @@ export default function CampaignModal({
     setName(defaultName || `Outreach — ${new Date().toLocaleDateString()}`);
     setWhen("now"); setScheduledAt(""); setError(""); setPickedListIds(new Set()); setAttachments([]);
     setSendTz(SEND_TIMEZONES[0].id);
-    fetch("/api/templates").then((r) => r.json()).then((d) => {
-      setTemplates(d.templates ?? []);
-      if (d.templates?.[0]) setTemplateId((prev) => prev || d.templates[0].id);
-    });
-    fetch("/api/mailboxes").then((r) => r.json()).then((d) => {
+    setLoadError(""); setCreatedId("");
+    // A failed load used to show "No lists yet" and an empty mail picker — say so instead.
+    const fail = (e: unknown) => setLoadError(`Couldn’t load your mails, lists or mailboxes — this is a connection problem, not lost data. ${errorText(e)}`);
+    getJson<{ templates?: Template[] }>("/api/templates").then((d) => {
+      const list = d.templates ?? [];
+      setTemplates(list);
+      if (list[0]) setTemplateId((prev) => prev || list[0].id);
+    }).catch(fail);
+    getJson<{ mailboxes?: { id: string; label: string }[] }>("/api/mailboxes").then((d) => {
       const boxes = d.mailboxes ?? [];
       setMailboxes(boxes);
       setFromMailbox(boxes[0]?.id ?? "");
-    });
+    }).catch(fail);
     if (needsListPicker) {
-      fetch("/api/lists").then((r) => r.json()).then((d) => setLists(d.lists ?? []));
+      getJson<{ lists?: List[] }>("/api/lists").then((d) => setLists(d.lists ?? [])).catch(fail);
     }
   }, [open, defaultName, needsListPicker]);
 
@@ -167,13 +176,24 @@ export default function CampaignModal({
       };
       if (when === "schedule") body.scheduledAt = new Date(scheduledAt).toISOString();
 
-      const d = await fetch("/api/campaigns", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-      }).then((r) => r.json());
-      if (!d.campaign) { setError(d.error || "Failed to create campaign"); setBusy(false); return; }
+      let d: { campaign?: { id: string }; error?: string };
+      try {
+        d = await getJson("/api/campaigns", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+        });
+      } catch (e) { setError(errorText(e)); return; }
+      if (!d.campaign) { setError(d.error || "Failed to create campaign"); return; }
 
       if (when === "now") {
-        await fetch(`/api/campaigns/${d.campaign.id}/send`, { method: "POST" });
+        try {
+          await getJson(`/api/campaigns/${d.campaign.id}/send`, { method: "POST" });
+        } catch (e) {
+          // The campaign exists; only the first send didn't confirm. Don't close as if it
+          // worked, and don't let a retry create a duplicate.
+          setCreatedId(d.campaign.id);
+          setError(`Campaign created, but sending didn’t confirm: ${errorText(e)} Some mails may already have gone out — open the campaign to check before sending again.`);
+          return;
+        }
       }
       onCreated(d.campaign.id);
     } finally {
@@ -190,6 +210,7 @@ export default function CampaignModal({
         <h3 className="font-bold text-lg mb-1">New campaign</h3>
         <p className="text-sm text-muted mb-1">{resolvedCount} recipients</p>
         {planNote && <p className="text-xs text-indigo-600 mb-4">{planNote}</p>}
+        {loadError && <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">{loadError}</p>}
 
         <label className="text-sm font-semibold block mb-1">Campaign name</label>
         <input className="input mb-4" value={name} onChange={(e) => setName(e.target.value)} />
@@ -197,7 +218,9 @@ export default function CampaignModal({
         {needsListPicker && (
           <>
             <label className="text-sm font-semibold block mb-1">Client lists <span className="text-muted font-normal">(pick one or more)</span></label>
-            {lists.length === 0 ? (
+            {loadError && lists.length === 0 ? (
+              <p className="text-sm text-muted mb-4">Lists couldn’t be loaded.</p>
+            ) : lists.length === 0 ? (
               <p className="text-sm text-muted mb-4">No lists yet — create one in Lists &amp; Upload first.</p>
             ) : (
               <div className="border border-border-soft rounded-lg mb-4 max-h-40 overflow-y-auto divide-y divide-border-soft">
@@ -338,10 +361,14 @@ export default function CampaignModal({
         {error && <p className="text-sm text-danger mb-3 font-medium">{error}</p>}
         <div className="flex justify-end gap-2 sticky bottom-0 bg-white pt-3 -mx-6 px-6 -mb-6 pb-6 border-t border-border-soft">
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={busy} onClick={create}>
-            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}
-            {when === "now" ? "Create & send" : "Schedule"}
-          </button>
+          {createdId ? (
+            <button className="btn btn-primary" onClick={() => onCreated(createdId)}>Open campaign</button>
+          ) : (
+            <button className="btn btn-primary" disabled={busy} onClick={create}>
+              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}
+              {when === "now" ? "Create & send" : "Schedule"}
+            </button>
+          )}
         </div>
       </div>
     </div>

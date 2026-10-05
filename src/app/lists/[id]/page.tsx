@@ -7,6 +7,7 @@ import * as XLSX from "xlsx";
 import { ArrowLeft, Loader2, Trash2, Save, Plus, Rocket, Upload, FileSpreadsheet } from "lucide-react";
 import type { List, Prospect } from "@/lib/types";
 import CampaignModal from "@/components/CampaignModal";
+import { getJson, errorText, FetchError } from "@/lib/client-fetch";
 
 const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 function pickCol(keys: string[], ...cands: string[]) {
@@ -29,19 +30,30 @@ export default function ListDetail({ params }: { params: Promise<{ id: string }>
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [otherLists, setOtherLists] = useState<List[]>([]);
   const [mergeId, setMergeId] = useState("");
+  const [problem, setProblem] = useState("");
+  const [notFound, setNotFound] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // A failed or 404 load used to leave the page on "Loading…" forever.
   const load = useCallback(async () => {
-    const d = await fetch(`/api/lists/${id}`).then((r) => r.json());
-    setList(d.list ?? null);
-    setMembers(d.members ?? []);
-    setDirty(new Set());
-    setSel(new Set());
+    try {
+      const d = await getJson<{ list: List; members?: Prospect[] }>(`/api/lists/${id}`);
+      setList(d.list ?? null);
+      setMembers(d.members ?? []);
+      setDirty(new Set());
+      setSel(new Set());
+      setProblem("");
+    } catch (e) {
+      if (e instanceof FetchError && e.status === 404) { setNotFound(true); return; }
+      setProblem(`Couldn’t load this list — this is a connection problem, not lost data. ${errorText(e)}`);
+    }
   }, [id]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    fetch("/api/lists").then((r) => r.json()).then((d) => setOtherLists((d.lists ?? []).filter((l: List) => l.id !== id)));
+    // Only feeds the "Merge another list in" picker — if it fails the picker just stays hidden.
+    getJson<{ lists?: List[] }>("/api/lists").then((d) => setOtherLists((d.lists ?? []).filter((l) => l.id !== id))).catch(() => {});
   }, [id]);
+  const fail = (what: string) => (e: unknown) => setProblem(`${what} ${errorText(e)}`);
 
   function toggleSel(pid: string) {
     setSel((prev) => { const n = new Set(prev); n.has(pid) ? n.delete(pid) : n.add(pid); return n; });
@@ -52,19 +64,25 @@ export default function ListDetail({ params }: { params: Promise<{ id: string }>
   async function removeSelected() {
     if (sel.size === 0) return;
     if (!confirm(`Remove ${sel.size} contacts from this list?`)) return;
-    await fetch(`/api/lists/${id}/bulk`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ removeProspectIds: [...sel] }),
-    });
+    setProblem("");
+    try {
+      await getJson(`/api/lists/${id}/bulk`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ removeProspectIds: [...sel] }),
+      });
+    } catch (e) { fail("Couldn’t remove those contacts — they’re still in the list.")(e); return; }
     load();
   }
   async function mergeIn() {
     if (!mergeId) return;
-    const d = await fetch(`/api/lists/${id}/bulk`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mergeFromListId: mergeId }),
-    }).then((r) => r.json());
-    if (d.list) setNote(`Merged in — list now has ${d.list.count} contacts.`);
+    setProblem("");
+    try {
+      const d = await getJson<{ list?: List }>(`/api/lists/${id}/bulk`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mergeFromListId: mergeId }),
+      });
+      if (d.list) setNote(`Merged in — list now has ${d.list.count} contacts.`);
+    } catch (e) { fail("Couldn’t merge that list in.")(e); return; }
     load();
   }
 
@@ -84,12 +102,17 @@ export default function ListDetail({ params }: { params: Promise<{ id: string }>
       }).then((r) => r.json());
       if (d.error) setNote(d.error);
       else setDirty((prev) => { const n = new Set(prev); n.delete(p.id); return n; });
+    } catch {
+      setNote(`Couldn’t save ${p.name || "that contact"} — the server didn’t answer. Your edit is still in the row; try again.`);
     } finally { setSavingId(""); }
   }
 
   async function removeMember(pid: string) {
     if (!confirm("Remove this contact from the list? (They stay in your database.)")) return;
-    await fetch(`/api/lists/${id}/members?prospectId=${pid}`, { method: "DELETE" });
+    setProblem("");
+    try {
+      await getJson(`/api/lists/${id}/members?prospectId=${pid}`, { method: "DELETE" });
+    } catch (e) { fail("Couldn’t remove that contact — they’re still in the list.")(e); return; }
     load();
   }
 
@@ -103,6 +126,8 @@ export default function ListDetail({ params }: { params: Promise<{ id: string }>
       }).then((r) => r.json());
       if (d.error) setNote(d.error);
       else { setNewC({ name: "", company: "", email: "" }); load(); }
+    } catch {
+      setNote("Couldn’t add that contact — the server didn’t answer. Try again.");
     } finally { setAdding(false); }
   }
 
@@ -143,7 +168,20 @@ export default function ListDetail({ params }: { params: Promise<{ id: string }>
     reader.readAsBinaryString(file);
   }
 
-  if (!list) return <div className="p-8 text-muted">Loading…</div>;
+  if (!list) {
+    if (notFound) return (
+      <div className="p-8 max-w-5xl mx-auto">
+        <p className="text-muted mb-3">This list doesn’t exist — it may have been deleted.</p>
+        <Link href="/lists" className="text-sm text-primary flex items-center gap-1"><ArrowLeft className="w-4 h-4" /> Back to Lists</Link>
+      </div>
+    );
+    if (problem) return (
+      <div className="p-8 max-w-5xl mx-auto">
+        <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">{problem}</p>
+      </div>
+    );
+    return <div className="p-8 text-muted">Loading…</div>;
+  }
 
   return (
     <div className="p-8 max-w-5xl mx-auto">
@@ -164,12 +202,13 @@ export default function ListDetail({ params }: { params: Promise<{ id: string }>
             <FileSpreadsheet className="w-4 h-4" /> Download Excel
           </a>
           <button className="btn btn-primary" disabled={members.length === 0} onClick={() => setShowCampaign(true)}>
-            <Rocket className="w-4 h-4" /> Run campaign
+            <Rocket className="w-4 h-4" /> Create campaign
           </button>
         </div>
       </div>
 
       {note && <div className="mb-4 p-3 rounded-lg bg-indigo-50 text-indigo-800 text-sm">{note}</div>}
+      {problem && <p className="mb-4 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">{problem}</p>}
 
       {/* Bulk + merge toolbar */}
       <div className="flex items-center justify-between flex-wrap gap-3 mb-3">

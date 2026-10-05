@@ -15,6 +15,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!emailRe.test(email)) return NextResponse.json({ error: "valid email required" }, { status: 400 });
 
   const store = getStore();
+  // Check the list first — otherwise the contact is created and then attached to nothing.
+  if (!(await store.getList(id))) return NextResponse.json({ error: "That list no longer exists." }, { status: 404 });
   const newP: Prospect = {
     id: uuid(), name: String(b.name || "").trim() || email.split("@")[0], title: "",
     company: String(b.company || "").trim(), companySize: "", industry: "", country: "", city: "",
@@ -33,6 +35,8 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const { id } = await params;
   const prospectId = new URL(req.url).searchParams.get("prospectId");
   if (!prospectId) return NextResponse.json({ error: "prospectId required" }, { status: 400 });
-  await getStore().removeFromList(id, prospectId);
+  const store = getStore();
+  if (!(await store.getList(id))) return NextResponse.json({ error: "That list no longer exists." }, { status: 404 });
+  await store.removeFromList(id, prospectId);
   return NextResponse.json({ ok: true });
 }

@@ -5,9 +5,14 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   const category = new URL(req.url).searchParams.get("category");
-  const all = await getStore().getTemplates();
-  const templates = category ? all.filter((t) => (t.category || "") === category) : all;
-  return NextResponse.json({ templates });
+  try {
+    const all = await getStore().getTemplates();
+    const templates = category ? all.filter((t) => (t.category || "") === category) : all;
+    return NextResponse.json({ templates });
+  } catch (e) {
+    console.error("GET /api/templates", e);
+    return NextResponse.json({ error: "Couldn’t reach the database just now — nothing is lost. Reload in a moment." }, { status: 503 });
+  }
 }
 
 export async function POST(req: NextRequest) {

@@ -4,6 +4,15 @@ import { getStore } from "@/lib/db";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  try {
+    return await buildStats();
+  } catch (e) {
+    console.error("GET /api/stats", e);
+    return NextResponse.json({ error: "Couldn’t reach the database just now — nothing is lost. Reload in a moment." }, { status: 503 });
+  }
+}
+
+async function buildStats() {
   const store = getStore();
   // All counts come from SQL aggregates — no full-table row dumps (Neon transfer).
   const s = await store.statsSummary();

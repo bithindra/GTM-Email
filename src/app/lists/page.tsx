@@ -7,6 +7,7 @@ import * as XLSX from "xlsx";
 import { Upload, Loader2, Trash2, Rocket, ListChecks, FileSpreadsheet } from "lucide-react";
 import type { List } from "@/lib/types";
 import CampaignModal from "@/components/CampaignModal";
+import { getJson, errorText } from "@/lib/client-fetch";
 
 type ParsedRow = { name: string; company: string; email: string };
 
@@ -27,11 +28,20 @@ export default function ListsPage() {
   const [uploading, setUploading] = useState(false);
   const [note, setNote] = useState("");
   const [campaignFor, setCampaignFor] = useState<List | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // A failed load used to throw unhandled and leave "No saved lists yet" on screen.
   async function loadLists() {
-    const d = await fetch("/api/lists").then((r) => r.json());
-    setLists(d.lists ?? []);
+    try {
+      const d = await getJson<{ lists?: List[] }>("/api/lists");
+      setLists(d.lists ?? []);
+      setLoaded(true);
+      setLoadError("");
+    } catch (e) {
+      setLoadError(`Couldn’t load your lists — this is a connection problem, not lost data. ${errorText(e)}`);
+    }
   }
   useEffect(() => { loadLists(); }, []);
 
@@ -91,12 +101,19 @@ export default function ListsPage() {
         const extra = d.summary ? ` (${d.summary.invalid_syntax} invalid format, ${d.summary.no_mx} no mail server)` : "";
         setNote((d.error || "Upload failed") + extra);
       }
+    } catch {
+      setNote("Upload failed — the server didn’t answer. Your file is still selected; try again.");
     } finally { setUploading(false); }
   }
 
   async function del(id: string) {
     if (!confirm("Delete this list? (Contacts stay in your database; only the list is removed.)")) return;
-    await fetch(`/api/lists?id=${id}`, { method: "DELETE" });
+    try {
+      await getJson(`/api/lists?id=${id}`, { method: "DELETE" });
+    } catch (e) {
+      setLoadError(`Couldn’t delete that list — it’s still there. ${errorText(e)}`);
+      return;
+    }
     loadLists();
   }
 
@@ -154,7 +171,10 @@ export default function ListsPage() {
           <ListChecks className="w-5 h-5 text-primary" />
           <h2 className="font-semibold">Saved lists</h2>
         </div>
-        {lists.length === 0 ? (
+        {loadError && <p className="m-4 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">{loadError}</p>}
+        {!loaded ? (
+          !loadError && <p className="p-6 text-sm text-muted">Loading…</p>
+        ) : lists.length === 0 ? (
           <p className="p-6 text-sm text-muted">No saved lists yet. Upload a sheet above, or save a selection from Find Founders.</p>
         ) : (
           <table className="w-full text-sm">
@@ -178,11 +198,11 @@ export default function ListsPage() {
                   <td className="p-3 text-muted">{new Date(l.createdAt).toLocaleDateString()}</td>
                   <td className="p-3">
                     <div className="flex items-center gap-3 justify-end">
-                      <Link href={`/lists/${l.id}`} className="btn btn-ghost">View / edit</Link>
-                      <a href={`/api/lists/${l.id}/export`} download className="btn btn-ghost" title="Download every contact in this list as an Excel file">
-                        <FileSpreadsheet className="w-4 h-4" /> Excel
+                      <Link href={`/lists/${l.id}`} className="btn btn-ghost whitespace-nowrap">View / edit</Link>
+                      <a href={`/api/lists/${l.id}/export`} download className="btn btn-ghost whitespace-nowrap" title="Download every contact in this list as an Excel file">
+                        <FileSpreadsheet className="w-4 h-4" /> Download Excel
                       </a>
-                      <button className="btn btn-primary" onClick={() => setCampaignFor(l)}><Rocket className="w-4 h-4" /> Campaign</button>
+                      <button className="btn btn-primary whitespace-nowrap" onClick={() => setCampaignFor(l)}><Rocket className="w-4 h-4" /> Create campaign</button>
                       <button className="text-muted hover:text-danger" onClick={() => del(l.id)}><Trash2 className="w-4 h-4" /></button>
                     </div>
                   </td>

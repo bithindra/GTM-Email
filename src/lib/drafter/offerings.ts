@@ -1,14 +1,20 @@
 // The ONLY place the drafter gets product facts. Every claim below was checked against
-// its source on 22 Sep 2026 — change it here, and re-check the source, never in compose.ts.
+// its source (first 22 Sep 2026, re-checked 5 Oct 2026) — change it here, and re-check the
+// source, never in compose.ts.
 //
 //   Brand Vibe — brandvibe-web/lib/site-config.ts (founder bio, stats, promise line) and
 //                app/book-a-growth-audit ("Book a Free Growth Audit", 45 minutes).
 //                Clients are deliberately anonymised on the site, so no client names.
-//   Maveriko   — webaudit/src/app/llms.txt/route.ts + src/lib/pricing.ts: free, no signup,
-//                ~15 s, 38 checks, Pro $29/month. It measures AI READINESS, not whether a
-//                site actually gets cited — never claim the latter. No annual plan (disabled).
-//   XamBaaz    — live public/llms.txt (be30187): 30,000+ MCQs, 410+ chapters, 115 mock
-//                papers (32 CBSE board, 21 JEE Main, 21 NEET, 24 MHT-CET), Class 8–12.
+//   Maveriko   — webaudit/src/app/llms.txt/route.ts + src/lib/pricing.ts: ~15 s, 38 checks;
+//                scores + the top fix are free with no signup (the other fixes need a free
+//                sign-in, or Pro); Pro $29/month removes the daily cap; Competitor Gap Report
+//                vs up to three competitors. It measures AI READINESS, not whether a site
+//                actually gets cited — never claim the latter. No annual plan (disabled).
+//   XamBaaz    — live public/llms.txt (49067e5): 30,000+ MCQs each with a worked
+//                explanation, 410+ chapters, Easy/Medium/Hard quizzes, a free Key Concepts
+//                revision card on 391 chapters (so "most", never "every"), 115 mock papers
+//                (32 CBSE board, 21 JEE Main, 21 NEET, 24 MHT-CET) with authentic exam
+//                marking and a step-by-step solution for every question, Class 8–12.
 //                Plain English; never quote the launch-offer end date in email.
 
 import type { Offering } from "./types";
@@ -43,7 +49,7 @@ export const OFFERINGS: Record<Offering, OfferingInfo> = {
     label: "XamBaaz",
     categories: ["XamBaaz"],
     blurb: "Exam practice for schools, Class 8–12",
-    signature: "Warm regards,\nBithindra Biswas\nFounder, XamBaaz\nwww.xambaaz.com",
+    signature: "Warm regards,\nBithindra Biswas\nFounder, XamBaaz\nxambaaz.com",
   },
 };
 
@@ -60,6 +66,9 @@ export const FACTS = {
     seconds: "about 15 seconds",
     checks: "38 checks",
     price: "$29 a month",
+    freeTier: "Your scores and the single biggest fix are free, with no signup",
+    pro: "Pro, at $29 a month, removes the daily cap and unlocks every fix",
+    compare: "a competitor gap report against up to three rivals",
   },
   xambaaz: {
     founder: "I'm Bithindra Biswas, an IIM Ahmedabad alumnus and guest faculty at IIT Bombay.",
@@ -68,6 +77,9 @@ export const FACTS = {
     mocks: "115 full-length mock papers",
     boardPapers: "32 CBSE-pattern board papers",
     entrance: "21 JEE Main and 21 NEET papers",
+    marking: "real exam marking",
+    solutions: "a step-by-step solution for every question",
+    revision: "Most chapters also have a free Key Concepts revision page, and every chapter has timed quizzes at three levels — Easy, Medium and Hard",
   },
 } as const;
 

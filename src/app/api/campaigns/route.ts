@@ -5,8 +5,13 @@ import { isSendTz } from "@/lib/send-window";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const campaigns = await getStore().getCampaigns();
-  return NextResponse.json({ campaigns });
+  try {
+    const campaigns = await getStore().getCampaigns();
+    return NextResponse.json({ campaigns });
+  } catch (e) {
+    console.error("GET /api/campaigns", e);
+    return NextResponse.json({ error: "Couldn’t reach the database just now — nothing is lost. Reload in a moment." }, { status: 503 });
+  }
 }
 
 export async function POST(req: NextRequest) {

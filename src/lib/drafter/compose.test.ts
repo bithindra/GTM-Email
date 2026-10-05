@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ANGLES, cleanTitle, compose, detectRole, employerFrom, sameCompany, toTemplate } from "./compose";
+import { ANGLES, cleanTitle, compose, detectRole, employerFrom, personalLeftovers, sameCompany, templateDraft, toTemplate } from "./compose";
 import { BANNED } from "./offerings";
 import type { Company, DraftAudit, Offering, Person } from "./types";
 
@@ -159,5 +159,56 @@ describe("never asserts a job they don't hold", () => {
   it("matches company names loosely", () => {
     expect(sameCompany("Acme Dental Pvt Ltd", "Acme Dental")).toBe(true);
     expect(sameCompany("Microsoft", "Zerodha")).toBe(false);
+  });
+});
+
+describe("templateDraft — a saved template must be true for everyone on a list", () => {
+  for (const offering of OFFERINGS) {
+    for (const angle of ANGLES[offering]) {
+      it(`${offering}/${angle.id} carries no one person's facts`, () => {
+        const t = templateDraft(offering, angle.id);
+        const text = `${t.subject}\n${t.body}`;
+        expect(text).not.toMatch(/As .+ at /); // no job title asserted for everyone
+        expect(text).not.toMatch(/I spent a few minutes on/); // no homepage quote
+        expect(text).not.toMatch(/\d+\/100/); // no audit scores
+        expect(text).not.toMatch(/undefined|null|\[object/);
+        // Only merge fields the campaign sender fills with a safe fallback.
+        for (const m of text.match(/\{\{\s*(\w+)\s*\}\}/g) ?? []) expect(m).toBe("{{first_name}}");
+      });
+    }
+  }
+  it("XamBaaz keeps 'Dear Principal,' rather than risking 'Dear there,'", () => {
+    expect(templateDraft("xambaaz", "pilot").body).toMatch(/^Dear Principal,/);
+    expect(templateDraft("brandvibe", "roi").body).toMatch(/^Hi \{\{first_name\}\},/);
+  });
+});
+
+describe("personalLeftovers — flags one-person facts in a hand-edited draft", () => {
+  it("finds the job title, homepage quote and audit scores", () => {
+    const input = { offering: "maveriko" as Offering, person: P(), company: C(), audit: AUDIT };
+    const d = compose({ ...input, angle: "audit" });
+    const left = personalLeftovers(`${d.subject}\n${d.body}`, input);
+    expect(left).toEqual(expect.arrayContaining(["their website address", "their audit scores"]));
+    const bv = { offering: "brandvibe" as Offering, person: P(), company: C(), audit: null };
+    expect(personalLeftovers(compose(bv).body, bv)).toEqual(expect.arrayContaining(["their job title", "the line quoted from their website"]));
+  });
+  it("is empty for the general version", () => {
+    const bv = { offering: "brandvibe" as Offering, person: P(), company: C(), audit: null };
+    expect(personalLeftovers(templateDraft("brandvibe", "roi").body, bv)).toEqual([]);
+  });
+});
+
+describe("product claims stay true to source", () => {
+  it("never says every chapter has a revision page (391 of 410+ do)", () => {
+    const d = compose({ offering: "xambaaz", angle: "exams", person: EMPTY_P, company: EMPTY_C, audit: null });
+    expect(d.body).not.toMatch(/Every chapter also has a free/i);
+    expect(d.body).toContain("Most chapters also have a free Key Concepts revision page");
+  });
+  it("Maveriko doesn't promise every fix free without signup", () => {
+    for (const angle of ["audit", "agency"]) {
+      const d = compose({ offering: "maveriko", angle, person: P(), company: C(), audit: null });
+      expect(d.body).not.toMatch(/exact fix for every check/i);
+      expect(d.body).not.toMatch(/unlimited/i);
+    }
   });
 });

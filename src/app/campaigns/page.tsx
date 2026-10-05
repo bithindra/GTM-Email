@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Send, ArrowRight, Clock } from "lucide-react";
 import type { Campaign } from "@/lib/types";
 import CampaignModal from "@/components/CampaignModal";
+import { getJson, errorText } from "@/lib/client-fetch";
 
 function statusStyle(s: Campaign["status"]) {
   if (s === "sent") return { background: "#dcfce7", color: "#15803d" };
@@ -18,11 +19,15 @@ export default function CampaignsPage() {
   const router = useRouter();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [showNew, setShowNew] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
     // Load the list once. The dispatcher tick runs separately via AutoDispatch; use
     // a page refresh to see status changes (avoids extra Neon-transfer round-trips).
-    fetch("/api/campaigns").then((r) => r.json()).then((d) => setCampaigns(d.campaigns ?? [])).catch(() => {});
+    getJson<{ campaigns?: Campaign[] }>("/api/campaigns")
+      .then((d) => { setCampaigns(d.campaigns ?? []); setLoaded(true); })
+      .catch((e) => setLoadError(`Couldn’t load your campaigns — this is a connection problem, not lost data. ${errorText(e)}`));
   }, []);
 
   return (
@@ -36,7 +41,9 @@ export default function CampaignsPage() {
       </div>
 
       <div className="space-y-3">
-        {campaigns.length === 0 && <div className="card p-8 text-center text-muted">No campaigns yet. Click “New campaign” to choose a list and a mail.</div>}
+        {loadError && <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">{loadError}</p>}
+        {!loaded && !loadError && <div className="card p-8 text-center text-muted">Loading…</div>}
+        {loaded && campaigns.length === 0 && <div className="card p-8 text-center text-muted">No campaigns yet. Click “New campaign” to choose a list and a mail.</div>}
         {campaigns.map((c) => (
           <Link key={c.id} href={`/campaigns/${c.id}`} className="card p-5 flex items-center justify-between hover:shadow-sm transition-shadow">
             <div>
