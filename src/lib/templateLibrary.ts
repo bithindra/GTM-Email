@@ -149,4 +149,62 @@ Bithindra Biswas
 Maveriko
 maveriko.com`,
   },
+  // Audit Outreach v2 (Oct 2026) — written to get a REPLY, not a click. The v1 mail
+  // above ends on "just reply" after a long free report pitch; this one leads with the
+  // two numbers, gives the single fix, keeps the report as the free give, then makes
+  // the ask one word ("yes" to a 3-step plan) and offers the done-for-you route (Brand
+  // Vibe: fixes + AI-led growth). Plain format so it reads like a person wrote it.
+  // Bands are left out on purpose: an empty band would block the send (hasUnresolvedMerge).
+  // Claims: AI readiness = how easily AI tools can READ the site — never "cited"/"visible".
+  {
+    key: "audit-outreach-growth-v2",
+    name: "Audit Outreach — Scores + Growth (v2)",
+    category: "Maveriko",
+    subject: "{{website}} scored {{seo_score}}/100 — one fix worth making",
+    format: "plain",
+    track: true,
+    body: `Hi {{first_name}},
+
+I ran {{website}} through Maveriko, a website checker I built, and two numbers are worth a minute of your time:
+
+- Google search (SEO): {{seo_score}}/100
+- AI readiness: {{geo_score}}/100 (how easily ChatGPT, Gemini and Google's AI answers can read and understand your site)
+
+The second one matters more every month, as more people ask an AI assistant for a recommendation instead of scrolling through Google.
+
+The biggest fix on your site right now:
+{{top_fix}}
+
+Your full report is free, no signup: {{report_url}}
+
+If you'd rather not handle it yourself, we fix this end to end at Brand Vibe, and go a step further: using AI to turn your website into a steady source of enquiries.
+
+Would a short 3-step plan for {{website}} help? Just reply "yes" and I'll send it over.
+
+Best,
+Bithindra Biswas
+Founder, Brand Vibe Consulting (IIM Ahmedabad)
+brandvibe.co.in
+
+P.S. Not the right person? A one-line reply with who looks after your website would be much appreciated.`,
+  },
+  {
+    key: "audit-outreach-followup-v2",
+    name: "Audit Outreach — Follow-up (v2)",
+    category: "Maveriko",
+    subject: "Re: {{website}} scored {{seo_score}}/100 — one fix worth making",
+    format: "plain",
+    track: true,
+    body: `Hi {{first_name}},
+
+Floating this back up in case it got buried. {{website}} is at {{seo_score}}/100 for search and {{geo_score}}/100 for AI readiness, and the top fix on the free report would move both:
+{{report_url}}
+
+Happy to send a short 3-step plan for your site. A one-word reply is enough.
+
+Best,
+Bithindra Biswas
+Brand Vibe Consulting
+brandvibe.co.in`,
+  },
 ];

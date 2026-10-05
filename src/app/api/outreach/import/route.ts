@@ -9,6 +9,14 @@ export const dynamic = "force-dynamic";
 
 type Incoming = { name?: string; email?: string; website?: string; city?: string; category?: string; phone?: string };
 
+/** Maps listing names are often keyword-stuffed ("Smile Dental | Best Dentist in Pune");
+ *  {{company}} should read like a name, so keep the part before the first separator. */
+function cleanBusinessName(raw: string): string {
+  const s = raw.replace(/\s+/g, " ").trim();
+  const head = s.split(/\s+[|–—-]\s+|\s*\|\s*/)[0].trim();
+  return (head.length >= 2 ? head : s).slice(0, 80);
+}
+
 /**
  * Turn audited businesses into prospects + a named list, applying the score
  * filter SERVER-SIDE. The UI shows the same filter, but the client cannot be
@@ -18,9 +26,12 @@ type Incoming = { name?: string; email?: string; website?: string; city?: string
 export async function POST(req: NextRequest) {
   const b = await req.json().catch(() => ({}));
   const listName = String(b.listName || "").trim();
-  const rows: Incoming[] = Array.isArray(b.businesses) ? b.businesses : [];
+  const rows: Incoming[] = Array.isArray(b.businesses) ? b.businesses.filter((r: unknown) => !!r && typeof r === "object") : [];
   const maxSeo = Number.isFinite(Number(b.maxSeo)) ? Number(b.maxSeo) : SEO_MAX;
   const maxGeo = Number.isFinite(Number(b.maxGeo)) ? Number(b.maxGeo) : GEO_MAX;
+  // "picked": he ticked these rows himself, so the score thresholds are only the
+  // default selection, not the gate. A real audit is still required — the mail quotes it.
+  const picked = b.mode === "picked";
   if (!listName) return NextResponse.json({ error: "list name required" }, { status: 400 });
   if (!rows.length) return NextResponse.json({ error: "no businesses" }, { status: 400 });
 
@@ -38,7 +49,7 @@ export async function POST(req: NextRequest) {
     if (seenEmail.has(email)) { skipped.duplicate++; continue; }
     seenEmail.add(email);
     candidates.push({
-      name: String(r.name || "").trim(),
+      name: cleanBusinessName(String(r.name || "")),
       email, website,
       city: String(r.city || "").trim(),
       category: String(r.category || "").trim(),
@@ -51,7 +62,8 @@ export async function POST(req: NextRequest) {
   const gated = candidates.filter((c) => {
     const a = audits.get(c.website);
     if (!a || a.status !== "ok") { skipped.notAudited++; return false; }
-    if (!qualifies(a, { maxSeo, maxGeo })) { skipped.scoredTooWell++; return false; }
+    if (!picked && !qualifies(a, { maxSeo, maxGeo })) { skipped.scoredTooWell++; return false; }
+    if (a.seoScore === null || a.geoScore === null || !a.reportUrl) { skipped.notAudited++; return false; }
     return true;
   });
 

@@ -249,7 +249,12 @@ export async function sendCampaignQueued(
       }
     }
   }
-  await store.setCampaignStatus(campaignId, stats.throttled > 0 || leftQueued > 0 ? "sending" : "sent");
+  // Mail left over (daily cap, mailbox cap, time budget, a transient error) must go out
+  // on a later pass. The dispatcher only picks up 'scheduled' campaigns, so a scheduled
+  // campaign goes back to 'scheduled' and resumes in its next send window. A campaign
+  // sent by hand with no schedule stays 'sending' — it resumes when he presses Send again.
+  const pending = stats.throttled > 0 || leftQueued > 0;
+  await store.setCampaignStatus(campaignId, pending ? (campaign.scheduledAt ? "scheduled" : "sending") : "sent");
   return { ...stats, budgetLeft: left };
 }
 
