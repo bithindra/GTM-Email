@@ -4,8 +4,11 @@ import { runDispatch } from "@/lib/sender";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // paced sends need room; loop self-limits via DISPATCH_TIME_BUDGET_MS
 
-// Scheduled twice in vercel.json (Hobby allows daily crons only, fired anywhere
-// in the hour). Each run sends only campaigns whose own zone is open, so:
+// Scheduled six times in vercel.json (Hobby allows daily crons only, fired anywhere
+// in the hour). This is the only always-on trigger — the GitHub Action was never
+// pushed. Each run sends only campaigns whose own zone is open, so:
+//   0 4 / 6 / 9 / 11 / 13 UTC → 09:30–19:29 IST (09:00–20:00 window), ~2 h apart;
+//              4–11 also land in Singapore hours (12:00–19:59 SGT).
 //   0 9  UTC → 14:30 IST, 17:00 SGT — India + Singapore; US is still night.
 //   0 17 UTC → 13:00 ET / 10:00 PT (12:00 / 09:00 in winter) — US only;
 //              it is 22:30 IST and 01:00 SGT, so India/Singapore stay queued.

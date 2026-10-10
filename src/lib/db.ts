@@ -18,6 +18,13 @@ function templateOrder(a: Template, b: Template): number {
    Both implement the same async Store interface.
    ============================================================ */
 
+// The inbox scan only needs recipients who could still reply or bounce. IMAP reads the
+// last 14 days of mail, and a follow-up can go out up to 60 + 60 days after the first
+// send, so the window is measured from the LAST mail we sent (first send or either
+// follow-up), not the first. 90 days covers every recipient still in a follow-up
+// sequence plus the 14-day scan, so a reply still stops the next follow-up.
+const RECONCILE_DAYS = 90;
+
 export interface Store {
   listProspects(): Promise<Prospect[]>;
   saveProspects(p: Prospect[]): Promise<Prospect[]>;
@@ -396,8 +403,10 @@ class MemoryStore implements Store {
     return [...this.recipients];
   }
   async recipientsToReconcile() {
+    const cutoff = Date.now() - RECONCILE_DAYS * 86_400_000;
+    const lastTouch = (r: Recipient) => Math.max(...[r.sentAt, r.followupSentAt, r.followup2SentAt].map((d) => (d ? Date.parse(d) : 0)));
     return this.recipients
-      .filter((r) => r.sentAt && r.status !== "replied" && r.status !== "bounced")
+      .filter((r) => r.sentAt && r.status !== "replied" && r.status !== "bounced" && lastTouch(r) >= cutoff)
       .map((r) => ({ id: r.id, email: r.email, status: r.status, sentAt: r.sentAt }));
   }
   async statsSummary() {
@@ -963,7 +972,8 @@ class PgStore implements Store {
   async recipientsToReconcile() {
     const sql = await this.db();
     const rows = await sql`SELECT id, email, status, sent_at FROM recipients
-      WHERE sent_at IS NOT NULL AND status NOT IN ('replied','bounced')`;
+      WHERE sent_at IS NOT NULL AND status NOT IN ('replied','bounced')
+        AND greatest(sent_at, followup_sent_at, followup2_sent_at) >= now() - (${RECONCILE_DAYS}::int * INTERVAL '1 day')`;
     return rows.map((r) => ({ id: r.id as string, email: (r.email as string) || "", status: r.status as RecipientStatus, sentAt: r.sent_at ? new Date(r.sent_at as string).toISOString() : null }));
   }
   async statsSummary() {

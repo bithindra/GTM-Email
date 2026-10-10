@@ -160,9 +160,10 @@ export async function sendCampaignQueued(
   if (!template) return { ...stats, budgetLeft: budget };
 
   await store.setCampaignStatus(campaignId, "sending");
-  // Attachments are excluded from getCampaign() to keep reads small — load the blobs
-  // here, once, only because we're actually sending.
-  const attachments = await store.getCampaignAttachments(campaignId);
+  // Attachments are excluded from getCampaign() to keep reads small. The blob (up to
+  // ~27 MB) is loaded lazily, once, right before the first real send — a tick held
+  // back by the daily/mailbox cap or the time budget never pulls it from Neon.
+  let attachments: import("./types").Attachment[] | undefined;
   const recipients = await store.getRecipients(campaignId);
   // Only load the prospects this campaign actually targets (not the whole table).
   const prospects = await store.getProspectsByIds(recipients.map((r) => r.prospectId));
@@ -220,6 +221,7 @@ export async function sendCampaignQueued(
       continue;
     }
     const html = renderBodyHtml(formatOf(template), trackOf(template), bodyText, r.id);
+    attachments ??= await store.getCampaignAttachments(campaignId);
     const res = await sendEmail({ to: r.email, subject, html, text: bodyText, recipientId: r.id, mailboxId: campaign.fromMailbox, attachments });
     if (res.ok) {
       stats.simulated = stats.simulated || res.simulated;
@@ -294,6 +296,10 @@ async function sendFollowupPass(
   pass: "first" | "second",
 ): Promise<SendStats & { due: number; budgetLeft: number }> {
   const stats: SendStats = { sent: 0, failed: 0, skipped: 0, simulated: false, throttled: 0 };
+  // Nothing due (the common tick) or no budget left: skip the template / suppression /
+  // prospect reads entirely. Same result the loop below would reach.
+  if (!due.length) return { ...stats, due: 0, budgetLeft: budget };
+  if (budget <= 0) return { ...stats, throttled: due.length, due: due.length, budgetLeft: budget };
   const prospects = await store.getProspectsByIds(due.map((d) => d.recipient.prospectId));
   const pIndex = new Map(prospects.map((p) => [p.id, p]));
   const audits = await store.getAuditsByWebsites(

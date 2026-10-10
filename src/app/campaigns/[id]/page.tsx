@@ -83,10 +83,16 @@ export default function CampaignDetail({ params }: { params: Promise<{ id: strin
 
   // Auto-refresh only while a campaign is actively sending (every 20s). Once "sent",
   // stop polling — use the Refresh button for on-demand updates. Keeps Neon load low.
+  // A hidden tab doesn't poll; it refreshes once when it becomes visible again.
   useEffect(() => {
     if (campaign?.status !== "sending") return;
-    const t = setInterval(load, 20000);
-    return () => clearInterval(t);
+    const t = setInterval(() => { if (!document.hidden) load(); }, 20000);
+    const onVisible = () => { if (!document.hidden) load(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [campaign?.status, load]);
 
   async function send() {
