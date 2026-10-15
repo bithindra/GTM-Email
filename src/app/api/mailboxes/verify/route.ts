@@ -21,7 +21,13 @@ export async function GET() {
   const mailboxes = await Promise.all(
     boxes.map(async (m) => {
       const r = await verifyMailbox(m);
-      return { id: m.id, from: m.from, host: m.host, port: m.port, ok: r.ok, ...(r.error ? { error: r.error } : {}) };
+      // A mailbox that sends through Amazon SES has two logins to prove: SES (sending)
+      // and its own (fallback sending + reading replies and bounces).
+      const relay = m.relay ? await verifyMailbox(m.relay) : null;
+      return {
+        id: m.id, from: m.from, host: m.host, port: m.port, ok: r.ok && (relay?.ok ?? true), ...(r.error ? { error: r.error } : {}),
+        ...(m.relay ? { sendsVia: m.relay.name, relayHost: m.relay.host, relayOk: relay!.ok, ...(relay!.error ? { relayError: relay!.error } : {}) } : {}),
+      };
     })
   );
   return NextResponse.json({

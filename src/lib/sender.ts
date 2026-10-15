@@ -1,6 +1,7 @@
 import { v4 as uuid } from "uuid";
 import { getStore, type Store } from "./db";
-import { renderBodyHtml, mergeDataFromProspect, renderTemplate, sendEmail, spin, formatOf, trackOf, hasUnresolvedMerge } from "./email";
+import { renderBodyHtml, mergeDataFromProspect, renderTemplate, sendEmail, spin, formatOf, trackOf, hasUnresolvedMerge, isPersonal, withOptOut } from "./email";
+import { resolveMailbox } from "./mailboxes";
 import { searchProspects, enrichPeople } from "./apollo";
 import { validateAddress } from "./emailcheck";
 import { scanInbox } from "./inbox";
@@ -61,13 +62,41 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // Drip, don't blast. After each real send we wait a randomized gap so a campaign goes
 // out as a human-paced series over several minutes rather than all at once — back-to-back
 // bursts are a classic spam signal. Tunable via SEND_PACE_MIN_MS / SEND_PACE_MAX_MS.
-async function pace(simulated: boolean) {
+async function pace(simulated: boolean, via?: "ses" | "direct") {
   if (simulated) return;
-  const a = Number(process.env.SEND_PACE_MIN_MS || 3000);
-  const b = Number(process.env.SEND_PACE_MAX_MS || 9000);
+  // Amazon SES takes 14 mails a second, so the human-cadence gap matters less there —
+  // a shorter one lets a run's 240 s budget carry ~3x the mail. A mailbox's own SMTP
+  // (Hostinger, Gmail) keeps the slower cadence.
+  const ses = via === "ses";
+  const a = Number((ses ? process.env.SES_PACE_MIN_MS : process.env.SEND_PACE_MIN_MS) || (ses ? 1000 : 3000));
+  const b = Number((ses ? process.env.SES_PACE_MAX_MS : process.env.SEND_PACE_MAX_MS) || (ses ? 2500 : 9000));
   const lo = Math.max(0, Math.min(a, b));
   const hi = Math.max(a, b);
   await sleep(lo + Math.floor(Math.random() * (hi - lo + 1)));
+}
+
+/**
+ * The Amazon SES account is XamBaaz's — its student mail runs through it first. AWS
+ * reviews or pauses an account whose bounces pass ~5% (complaints 0.1%), and cold lists
+ * bounce more than opted-in ones. So a mailbox stops using SES on its own once its
+ * last 7 days bounce over SES_BOUNCE_GUARD (default 3%, judged after 40 sends) and goes
+ * back to its own SMTP; SES resumes when the rate falls. Cached per dispatch run.
+ */
+export function bounceGuardTripped(sent: number, bounced: number): boolean {
+  const limit = Number(process.env.SES_BOUNCE_GUARD || 0.03);
+  return sent >= 40 && bounced / sent > limit;
+}
+async function relayAllowed(store: Store, mailboxId: string | null, cache: Map<string, boolean>): Promise<boolean> {
+  const key = mailboxId ?? "";
+  if (cache.has(key)) return cache.get(key)!;
+  let ok = true;
+  if (resolveMailbox(mailboxId)?.relay) {
+    const { sent, bounced } = await store.bounceStatsByMailbox(mailboxId, 7);
+    ok = !bounceGuardTripped(sent, bounced);
+    if (!ok) console.warn(`[send] SES bounce guard: ${mailboxId} bounced ${bounced}/${sent} in 7 days — sending directly`);
+  }
+  cache.set(key, ok);
+  return ok;
 }
 
 // Only these mean "this ADDRESS is permanently invalid" → mark bounced + suppress.
@@ -177,7 +206,10 @@ export async function sendCampaignQueued(
 
   // Per-mailbox daily cap (warm-up / anti-throttle). 0 = disabled. Keeps a single
   // inbox under a safe send volume so it isn't flagged or limited by the provider.
-  const mbLimit = Number(process.env.MAILBOX_DAILY_LIMIT || 0);
+  // A mailbox sending through Amazon SES isn't held to its own provider's small daily
+  // limit; SES_MAILBOX_DAILY_LIMIT (default 300) keeps cold volume deliberate instead.
+  const viaSes = !!resolveMailbox(campaign.fromMailbox)?.relay && (await relayAllowed(store, campaign.fromMailbox, new Map()));
+  const mbLimit = viaSes ? Number(process.env.SES_MAILBOX_DAILY_LIMIT || 300) : Number(process.env.MAILBOX_DAILY_LIMIT || 0);
   let mbLeft = mbLimit > 0 ? Math.max(0, mbLimit - (await store.sentTodayByMailbox(campaign.fromMailbox))) : Infinity;
 
   let left = budget;
@@ -209,7 +241,8 @@ export async function sendCampaignQueued(
     const data = mergeDataFromProspect(p ?? { name: r.name, company: r.company, title: "", city: "", country: "" }, audits.get(p?.website || ""));
     // Spin first (per-recipient wording variation), then fill merge fields.
     const subject = renderTemplate(spin(template.subject, r.id), data);
-    const bodyText = renderTemplate(spin(template.body, r.id), data);
+    const personal = isPersonal(template);
+    const bodyText = withOptOut(renderTemplate(spin(template.body, r.id), data), personal);
     // Last gate before the wire. An audit template whose recipient has no audit
     // row would otherwise go out reading "your site scored /100" — worse than
     // not sending at all, and unrecoverable once delivered.
@@ -222,7 +255,7 @@ export async function sendCampaignQueued(
     }
     const html = renderBodyHtml(formatOf(template), trackOf(template), bodyText, r.id);
     attachments ??= await store.getCampaignAttachments(campaignId);
-    const res = await sendEmail({ to: r.email, subject, html, text: bodyText, recipientId: r.id, mailboxId: campaign.fromMailbox, attachments });
+    const res = await sendEmail({ to: r.email, subject, html, text: bodyText, recipientId: r.id, mailboxId: campaign.fromMailbox, attachments, personal, allowRelay: viaSes });
     if (res.ok) {
       stats.simulated = stats.simulated || res.simulated;
       await store.markSent(r.id);
@@ -232,7 +265,7 @@ export async function sendCampaignQueued(
       stats.sent++;
       left--;
       mbLeft--;
-      await pace(res.simulated);
+      await pace(res.simulated, res.via);
     } else {
       const err = res.error || "";
       if (MAILBOX_LIMIT_ERROR.test(err)) {
@@ -308,6 +341,7 @@ async function sendFollowupPass(
   const templates = new Map((await store.getTemplates()).map((t) => [t.id, t]));
   const suppressed = await store.suppressedEmails();
   const attachCache = new Map<string, import("./types").Attachment[]>(); // per-campaign, fetched once
+  const relayCache = new Map<string, boolean>();
 
   let left = budget;
   for (const { campaign, recipient } of due) {
@@ -323,7 +357,8 @@ async function sendFollowupPass(
     const p = pIndex.get(recipient.prospectId);
     const data = mergeDataFromProspect(p ?? { name: recipient.name, company: recipient.company, title: "", city: "", country: "" }, audits.get(p?.website || ""));
     const subject = renderTemplate(spin(tmpl.subject, recipient.id), data);
-    const bodyText = renderTemplate(spin(tmpl.body, recipient.id), data);
+    const personal = isPersonal(tmpl);
+    const bodyText = withOptOut(renderTemplate(spin(tmpl.body, recipient.id), data), personal);
     const broken = hasUnresolvedMerge(tmpl.subject, subject, data) ?? hasUnresolvedMerge(tmpl.body, bodyText, data);
     if (broken) {
       console.warn(`[followup] blocked ${recipient.email}: ${broken}`);
@@ -332,14 +367,15 @@ async function sendFollowupPass(
     }
     const html = renderBodyHtml(formatOf(tmpl), trackOf(tmpl), bodyText, recipient.id);
     if (!attachCache.has(campaign.id)) attachCache.set(campaign.id, await store.getCampaignAttachments(campaign.id));
-    const res = await sendEmail({ to: recipient.email, subject, html, text: bodyText, recipientId: recipient.id, mailboxId: campaign.fromMailbox, attachments: attachCache.get(campaign.id) });
+    const allowRelay = await relayAllowed(store, campaign.fromMailbox, relayCache);
+    const res = await sendEmail({ to: recipient.email, subject, html, text: bodyText, recipientId: recipient.id, mailboxId: campaign.fromMailbox, attachments: attachCache.get(campaign.id), personal, allowRelay });
     if (res.ok) {
       stats.simulated = stats.simulated || res.simulated;
       if (pass === "first") await store.markFollowupSent(recipient.id);
       else await store.markFollowup2Sent(recipient.id);
       stats.sent++;
       left--;
-      await pace(res.simulated);
+      await pace(res.simulated, res.via);
     } else {
       const err = res.error || "";
       if (MAILBOX_LIMIT_ERROR.test(err)) {

@@ -1,5 +1,5 @@
 import type { Attachment, AuditRecord, Prospect, Recipient, Template } from "./types";
-import { resolveMailbox } from "./mailboxes";
+import { brandOf, resolveMailbox, type Mailbox } from "./mailboxes";
 
 export function appUrl(): string {
   return (
@@ -208,6 +208,33 @@ export function trackOf(t: Pick<Template, "track" | "format" | "type">): boolean
   return formatOf(t) !== "plain";
 }
 
+/**
+ * A "personal note": plain text, tracking off. Tested on fresh inboxes (13–14 Oct 2026,
+ * XamBaaz): a short note from a named person with no List-Unsubscribe header, no
+ * pixel and no rewritten links reached Primary through Hostinger, Brevo AND SES, while
+ * the same content as a designed/tracked template went to Promotions. So these go out
+ * from "Bithin from <brand>", without the header, with the opt-out in the body.
+ * Cost: no open/click tracking for them — replies are the measure.
+ */
+export function isPersonal(t: Pick<Template, "track" | "format" | "type">): boolean {
+  return formatOf(t) === "plain" && !trackOf(t);
+}
+
+export const OPT_OUT_LINE = `P.S. If this isn't for you, just reply "stop" and I won't write again.`;
+
+/** Personal notes carry their opt-out in the body — add it when the copy doesn't already. */
+export function withOptOut(body: string, personal: boolean): string {
+  if (!personal || /reply[^\n]{0,20}\bstop\b/i.test(body)) return body;
+  return `${body.trimEnd()}\n\n${OPT_OUT_LINE}`;
+}
+
+/** "Bithin from Brand Vibe <hello@brandvibe.co.in>" — the person, then the brand. */
+export function personalFrom(m: Pick<Mailbox, "from" | "user">): string {
+  const first = process.env.PERSONAL_FIRST_NAME || "Bithin";
+  const addr = m.from.match(/<([^>]+)>/)?.[1] || m.user;
+  return `"${first} from ${brandOf(m).replace(/"/g, "")}" <${addr}>`;
+}
+
 // Pick the renderer based on format + tracking.
 export function renderBodyHtml(format: Format, track: boolean, bodyText: string, recipientId: string): string {
   if (format === "newsletter") return buildNewsletterHtml(bodyText, recipientId, track);
@@ -215,7 +242,10 @@ export function renderBodyHtml(format: Format, track: boolean, bodyText: string,
   return buildPlain(bodyText, recipientId, track);
 }
 
-export type SendResult = { ok: boolean; simulated: boolean; id?: string; error?: string };
+export type SendResult = { ok: boolean; simulated: boolean; id?: string; error?: string; via?: "ses" | "direct" };
+
+// The recipient address itself is bad — trying another route would only bounce again.
+const RECIPIENT_INVALID = /5\.1\.[0-9]\b|user unknown|no such user|does not exist|address rejected|recipient rejected/i;
 
 export async function sendEmail(opts: {
   to: string;
@@ -225,10 +255,12 @@ export async function sendEmail(opts: {
   recipientId?: string; // enables the one-click HTTP unsubscribe link
   mailboxId?: string | null; // which configured Gmail mailbox to send from (null = primary)
   attachments?: Attachment[];
+  personal?: boolean; // personal note: sent as "Bithin from <brand>", no List-Unsubscribe header
+  allowRelay?: boolean; // false = skip Amazon SES for this send (the bounce guard tripped)
 }): Promise<SendResult> {
   // Pick the sending mailbox (chosen per-campaign); falls back to the primary.
   const mailbox = resolveMailbox(opts.mailboxId);
-  const from = mailbox?.from || process.env.EMAIL_FROM || "GTM Flow <onboarding@resend.dev>";
+  const from = mailbox && opts.personal ? personalFrom(mailbox) : mailbox?.from || process.env.EMAIL_FROM || "GTM Flow <onboarding@resend.dev>";
   // Replies should land in the sending mailbox itself.
   const replyTo = mailbox?.replyTo || process.env.REPLY_TO || process.env.SMTP_USER || (from.match(/<([^>]+)>/)?.[1] ?? undefined);
   const files = opts.attachments ?? [];
@@ -237,30 +269,44 @@ export async function sendEmail(opts: {
   // (RFC 8058) plus a mailto: fallback; mailbox providers prefer the https form.
   const headers: Record<string, string> = {};
   const unsubParts: string[] = [];
-  if (opts.recipientId) unsubParts.push(`<${unsubscribeUrl(opts.recipientId)}>`);
-  if (replyTo) unsubParts.push(`<mailto:${replyTo}?subject=unsubscribe>`);
-  if (unsubParts.length) headers["List-Unsubscribe"] = unsubParts.join(", ");
-  if (opts.recipientId) headers["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";
+  if (!opts.personal) {
+    if (opts.recipientId) unsubParts.push(`<${unsubscribeUrl(opts.recipientId)}>`);
+    if (replyTo) unsubParts.push(`<mailto:${replyTo}?subject=unsubscribe>`);
+    if (unsubParts.length) headers["List-Unsubscribe"] = unsubParts.join(", ");
+    if (opts.recipientId) headers["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";
+  }
 
   // 1. SMTP — preferred when configured. Host/port come from the chosen mailbox, so a
   // Gmail sender (smtp.gmail.com) and a custom-domain sender (e.g. smtp.hostinger.com)
   // can coexist across campaigns.
   if (mailbox?.user && mailbox?.pass) {
+    const nodemailer = (await import("nodemailer")).default;
+    const message = {
+      from, to: opts.to, subject: opts.subject, html: opts.html, text: opts.text, replyTo, headers,
+      attachments: files.map((a) => ({ filename: a.filename, content: a.content, encoding: "base64" as const, contentType: a.contentType })),
+    };
+    const via = async (t: { host: string; port: number; user: string; pass: string }) => {
+      const transport = nodemailer.createTransport({ host: t.host, port: t.port, secure: t.port === 465, auth: { user: t.user, pass: t.pass } });
+      return transport.sendMail(message);
+    };
+    // Amazon SES first when this mailbox is set to use it. If SES refuses for any reason
+    // other than "this address doesn't exist" (not verified yet, throttled, paused),
+    // the mailbox's own SMTP sends it instead, so a SES problem never stops a campaign.
+    if (mailbox.relay && opts.allowRelay !== false) {
+      try {
+        const info = await via(mailbox.relay);
+        return { ok: true, simulated: false, id: info.messageId, via: "ses" };
+      } catch (e) {
+        const err = (e as Error).message;
+        if (RECIPIENT_INVALID.test(err)) return { ok: false, simulated: false, error: err, via: "ses" };
+        console.warn(`[send] Amazon SES refused (${mailbox.id}), sending directly: ${err}`);
+      }
+    }
     try {
-      const nodemailer = (await import("nodemailer")).default;
-      const transport = nodemailer.createTransport({
-        host: mailbox.host,
-        port: mailbox.port,
-        secure: mailbox.port === 465,
-        auth: { user: mailbox.user, pass: mailbox.pass },
-      });
-      const info = await transport.sendMail({
-        from, to: opts.to, subject: opts.subject, html: opts.html, text: opts.text, replyTo, headers,
-        attachments: files.map((a) => ({ filename: a.filename, content: a.content, encoding: "base64", contentType: a.contentType })),
-      });
-      return { ok: true, simulated: false, id: info.messageId };
+      const info = await via(mailbox);
+      return { ok: true, simulated: false, id: info.messageId, via: "direct" };
     } catch (e) {
-      return { ok: false, simulated: false, error: (e as Error).message };
+      return { ok: false, simulated: false, error: (e as Error).message, via: "direct" };
     }
   }
 
@@ -306,7 +352,7 @@ export async function verifyMailbox(mailbox: { host: string; port: number; user:
 
 export function previewFor(template: Template, sample: MergeData, recipientId = "preview") {
   const subject = renderTemplate(spin(template.subject, recipientId), sample);
-  const bodyText = renderTemplate(spin(template.body, recipientId), sample);
+  const bodyText = withOptOut(renderTemplate(spin(template.body, recipientId), sample), isPersonal(template));
   return { subject, bodyText, html: renderBodyHtml(formatOf(template), trackOf(template), bodyText, recipientId) };
 }
 

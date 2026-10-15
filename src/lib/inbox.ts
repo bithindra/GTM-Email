@@ -58,6 +58,33 @@ export type InboxScan = {
   mailboxes: MailboxScan[];
 };
 
+/** Their own words at the top of a reply — quoted history and signatures dropped. */
+export function ownWords(text: string): string {
+  const cut = text.search(/^\s*(?:On .{0,200}wrote:|-{2,}\s*Original Message|From: .+@)/im);
+  return (cut >= 0 ? text.slice(0, cut) : text)
+    .split(/\r?\n/).filter((l) => !/^\s*>/.test(l)).join("\n").trim().slice(0, 400);
+}
+
+/** A reply that asks not to be written to again ("stop", "remove me", "not interested"). */
+export function wantsOut(reply: string): boolean {
+  return /^\W*(?:stop|unsubscribe|remove(?: me)?|please remove|opt[\s-]?out|not interested|no thanks?|don'?t (?:email|mail|contact|write))\b/i.test(ownWords(reply));
+}
+
+async function replyText(client: import("imapflow").ImapFlow, uid: number): Promise<string> {
+  // Part 1 is the text of a plain mail or the first alternative of a multipart one;
+  // 1.1 when the text sits one level deeper (multipart/mixed around an alternative).
+  for (const part of ["1", "1.1"]) {
+    const dl = await client.download(String(uid), part, { uid: true, maxBytes: 8000 });
+    const chunks: Buffer[] = [];
+    for await (const c of dl.content) chunks.push(c as Buffer);
+    const text = Buffer.concat(chunks).toString("utf8");
+    if (text && !/^content-type:|^--[\w'()+,./:=?-]{6,}/im.test(text.slice(0, 300))) {
+      return /<[a-z][\s\S]*>/i.test(text) ? text.replace(/<br\s*\/?>|<\/p>|<\/div>/gi, "\n").replace(/<[^>]+>/g, " ") : text;
+    }
+  }
+  return "";
+}
+
 /**
  * Read ONE mailbox over IMAP and reconcile recipient statuses: a message FROM a
  * recipient = "replied"; a bounce notice naming a recipient = "bounced".
@@ -93,6 +120,9 @@ async function scanOne(
       // Carry the subject with each candidate: "(Delay)" appears in the subject while
       // the body may still read like a failure, so both are checked before marking.
       const bounceUids: { uid: number; subject: string }[] = [];
+      // Replies whose subject doesn't say "unsubscribe": the body may ("stop"), which is
+      // the opt-out personal notes ask for. Read after the scan, like bounce notices.
+      const replyUids: { uid: number; from: string }[] = [];
       for await (const msg of client.fetch({ since }, { uid: true, envelope: true })) {
         scanned++;
         const env = msg.envelope;
@@ -106,6 +136,8 @@ async function scanOne(
           // Honor any opt-out intent globally, then record the reply.
           if (/unsubscribe|remove me|opt[\s-]?out|stop emailing/i.test(subject)) {
             await store.suppress(from, "unsubscribe-reply");
+          } else if (msg.uid) {
+            replyUids.push({ uid: msg.uid, from });
           }
           for (const id of byEmail.get(from)!) {
             await store.recordEvent(id, "replied");
@@ -119,6 +151,12 @@ async function scanOne(
             BOUNCE_CANDIDATE_SUBJECT.test(subject)) {
           if (msg.uid) bounceUids.push({ uid: msg.uid, subject });
         }
+      }
+
+      for (const { uid, from } of replyUids) {
+        try {
+          if (wantsOut(await replyText(client, uid))) await store.suppress(from, "stop-reply");
+        } catch { /* unreadable reply: it still counts as a reply */ }
       }
 
       // Read each notice and decide permanent vs temporary from its body, where the

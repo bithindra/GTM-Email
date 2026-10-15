@@ -75,7 +75,9 @@ export interface Store {
   deleteList(id: string): Promise<void>;
   updateProspect(id: string, patch: Partial<Prospect>): Promise<Prospect | null>;
   sentTodayCount(): Promise<number>;
-  sentTodayByMailbox(mailbox: string | null): Promise<number>; // today's sends from one mailbox (warm-up cap)
+  sentTodayByMailbox(mailbox: string | null): Promise<number>;
+  // First mails sent from one mailbox in the last `days`, and how many of them bounced.
+  bounceStatsByMailbox(mailbox: string | null, days: number): Promise<{ sent: number; bounced: number }>; // today's sends from one mailbox (warm-up cap)
   createSourcingRequest(filters: SearchFilters): Promise<SourcingRequest>;
   listSourcingRequests(): Promise<SourcingRequest[]>;
   getSourcingRequest(id: string): Promise<SourcingRequest | null>;
@@ -536,6 +538,17 @@ class MemoryStore implements Store {
       if (on(r.sentAt) || on(r.followupSentAt) || on(r.followup2SentAt)) n++;
     }
     return n;
+  }
+  async bounceStatsByMailbox(mailbox: string | null, days: number) {
+    const since = Date.now() - days * 86_400_000;
+    const ids = new Set(this.campaigns.filter((c) => (c.fromMailbox ?? null) === (mailbox ?? null)).map((c) => c.id));
+    let sent = 0, bounced = 0;
+    for (const r of this.recipients) {
+      if (!ids.has(r.campaignId) || !r.sentAt || Date.parse(r.sentAt) < since) continue;
+      sent++;
+      if (r.status === "bounced") bounced++;
+    }
+    return { sent, bounced };
   }
   async createSourcingRequest(filters: SearchFilters) {
     const req: SourcingRequest = { id: uuid(), filters, status: "pending", note: "", resultListId: null, importedCount: 0, createdAt: new Date().toISOString(), fulfilledAt: null };
@@ -1170,6 +1183,15 @@ class PgStore implements Store {
       WHERE c.from_mailbox IS NOT DISTINCT FROM ${mailbox}
         AND (r.sent_at::date = current_date OR r.followup_sent_at::date = current_date OR r.followup2_sent_at::date = current_date)`;
     return (rows[0]?.n as number) || 0;
+  }
+  async bounceStatsByMailbox(mailbox: string | null, days: number) {
+    const sql = await this.db();
+    const rows = await sql`
+      SELECT count(*)::int AS sent, count(*) FILTER (WHERE r.status = 'bounced')::int AS bounced
+      FROM recipients r JOIN campaigns c ON c.id = r.campaign_id
+      WHERE c.from_mailbox IS NOT DISTINCT FROM ${mailbox}
+        AND r.sent_at > now() - make_interval(days => ${days})`;
+    return { sent: (rows[0]?.sent as number) || 0, bounced: (rows[0]?.bounced as number) || 0 };
   }
   private mapReq(r: Record<string, unknown>): SourcingRequest {
     return {

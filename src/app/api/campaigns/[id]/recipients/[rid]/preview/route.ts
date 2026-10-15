@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStore } from "@/lib/db";
-import { hasUnresolvedMerge, mergeDataFromProspect, renderTemplate, spin } from "@/lib/email";
+import { hasUnresolvedMerge, isPersonal, mergeDataFromProspect, renderTemplate, spin, withOptOut } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
 
@@ -29,9 +29,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
   // Same gate the sender applies, surfaced here so the operator finds out at
   // preview time — not by discovering the recipient was silently skipped.
-  const render = (t: { subject: string; body: string }) => {
+  const render = (t: { subject: string; body: string; format?: "plain" | "rich" | "newsletter"; track?: boolean; type?: "outreach" | "newsletter" }) => {
     const subject = renderTemplate(spin(t.subject, rid), data);
-    const body = renderTemplate(spin(t.body, rid), data);
+    const body = withOptOut(renderTemplate(spin(t.body, rid), data), isPersonal(t));
     const blocked = hasUnresolvedMerge(t.subject, subject, data) ?? hasUnresolvedMerge(t.body, body, data);
     return { subject, body, blocked };
   };

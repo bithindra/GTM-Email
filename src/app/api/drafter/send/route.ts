@@ -97,7 +97,8 @@ export async function POST(req: NextRequest) {
 
   // Plain format, no tracking pixel: a one-to-one note should look like one.
   const html = renderBodyHtml("plain", false, body, "");
-  const res = await sendEmail({ to, subject, html, text: body, mailboxId: chosen });
+  // A 1:1 note, so it goes as one: from Bithin, no bulk-mail header.
+  const res = await sendEmail({ to, subject, html, text: body, mailboxId: chosen, personal: true });
   if (!res.ok) return NextResponse.json({ error: `The mail server refused it: ${res.error}` }, { status: 502 });
   if (!res.simulated) await store.incrementCounter(sentKey(to)).catch(() => {});
 

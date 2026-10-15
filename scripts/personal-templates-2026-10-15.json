@@ -1,0 +1,58 @@
+[
+  {
+    "id": "1b26a678-25f5-405f-8803-74397ed8e5e1",
+    "name": "AI Consulting",
+    "category": "Brand Vibe",
+    "subject": "AI at {{company}}",
+    "body": "Hi {{first_name}},\n\nQuick one. Most teams I talk to are trying AI somewhere, but very few can point to a number it has actually moved.\n\nThat's the gap I work on at Brand Vibe. We find the two or three places where AI genuinely saves time or money (marketing, operations, reporting), build them with your team and hand them over running. Working systems, not a strategy deck.\n\nA little about me: IIM Ahmedabad, 20+ years running businesses, and I teach AI as guest faculty at IIT Bombay and IIM Mumbai.\n\nWould a 15-minute call to see where AI would pay back at {{company}} be useful?\n\nBithin\nBithindra Biswas, Brand Vibe Consulting\nbrandvibe.co.in\n\nP.S. If this isn't for you, just reply \"stop\" and I won't write again."
+  },
+  {
+    "id": "c082304c-c777-4045-ab1e-48b6a05b2c0b",
+    "name": "AI Workshop",
+    "category": "Brand Vibe",
+    "subject": "A hands-on AI session for your team",
+    "body": "Hi {{first_name}},\n\nMost AI workshops end with a slide deck. Mine end with your team running automations they built themselves, on their own work: sales, marketing, operations or support.\n\nRecently a B2B leadership team went from zero to two live automations in a week, one for lead qualification and one for internal reporting.\n\nI'm an IIM Ahmedabad alumnus with 20+ years running businesses across media, telecom, banking and tech, and I teach AI as guest faculty at IIT Bombay and IIM Mumbai.\n\nShall I send you a one-page outline of how a session could look for {{company}}?\n\nBithin\nBithindra Biswas, Brand Vibe Consulting\nbrandvibe.co.in\n\nP.S. If this isn't for you, just reply \"stop\" and I won't write again."
+  },
+  {
+    "id": "edc04394-825e-4c0b-b681-a8c880b1a345",
+    "name": "Linkedin",
+    "category": "Brand Vibe",
+    "subject": "Your LinkedIn profile",
+    "body": "Hi {{first_name}},\n\nI came across your LinkedIn profile, and your experience is stronger than the profile currently shows.\n\nI'm a LinkedIn Top Voice, and I help senior professionals sharpen how they come across there, so the right people want to connect with them.\n\nHappy to send you three specific changes I'd make, no strings attached. Would that help?\n\nBithin\nBrand Vibe Consulting\n\nP.S. If this isn't for you, just reply \"stop\" and I won't write again."
+  },
+  {
+    "id": "8588eafa-d4f8-413f-9e4f-de8b54d012d5",
+    "name": "Audit Outreach — Scores + Growth (v2)",
+    "category": "Maveriko",
+    "subject": "Quick note on {{website}}",
+    "body": "Hi {{first_name}},\n\nI ran {{website}} through Maveriko, a website checker I built. It scored {{seo_score}}/100 for Google search and {{geo_score}}/100 for AI readiness, which is how easily ChatGPT and Google's AI answers can read your site.\n\nThe biggest fix right now:\n{{top_fix}}\n\nYour full report is free: {{report_url}}\n\nIf you'd rather have it fixed for you, and AI put to work bringing in more enquiries, that's what we do at Brand Vibe. Shall I send a short 3-step plan for {{website}}?\n\nBithin\nBithindra Biswas, Brand Vibe Consulting\nbrandvibe.co.in\n\nP.S. If this isn't for you, just reply \"stop\" and I won't write again."
+  },
+  {
+    "id": "c3abf1c3-5d2f-4214-9795-69d145e9b83c",
+    "name": "Audit Outreach — Follow-up (v2)",
+    "category": "Maveriko",
+    "subject": "Re: Quick note on {{website}}",
+    "body": "Hi {{first_name}},\n\nBumping this in case it got buried. The free report for {{website}} is here: {{report_url}}\n\nHappy to send the 3-step plan if it's useful. A one-word reply is enough.\n\nBithin\n\nP.S. If this isn't for you, just reply \"stop\" and I won't write again."
+  },
+  {
+    "id": "fa455b7f-85e9-428e-b922-e3b6ce790746",
+    "name": "Maveriko — Free Site Audit",
+    "category": "Maveriko",
+    "subject": "{{website}}: {{seo_score}}/100 on search",
+    "body": "Hi {{first_name}},\n\nI ran a free check on {{website}} and thought you'd want the result. It scored {{seo_score}}/100 for search and {{geo_score}}/100 for AI readiness, which is how easily tools like ChatGPT and Google's AI answers can read your site.\n\nThe single biggest fix right now:\n{{top_fix}}\n\nThe full report is free, with no signup: {{report_url}}\n\nPass it to whoever looks after your website. If you'd like a hand with the rest, just reply.\n\nBithin\nBithindra Biswas, Maveriko\n\nP.S. If this isn't for you, just reply \"stop\" and I won't write again."
+  },
+  {
+    "id": "c008aac4-50fb-4e83-9158-6f67d7ea4791",
+    "name": "Maveriko — Free Site Audit (older copy)",
+    "category": "Maveriko",
+    "subject": "{{website}}: {{seo_score}}/100 on search",
+    "body": "Hi {{first_name}},\n\nI ran a free check on {{website}} and thought you'd want the result. It scored {{seo_score}}/100 for search and {{geo_score}}/100 for AI readiness, which is how easily tools like ChatGPT and Google's AI answers can read your site.\n\nThe single biggest fix right now:\n{{top_fix}}\n\nThe full report is free, with no signup: {{report_url}}\n\nPass it to whoever looks after your website. If you'd like a hand with the rest, just reply.\n\nBithin\nBithindra Biswas, Maveriko\n\nP.S. If this isn't for you, just reply \"stop\" and I won't write again."
+  },
+  {
+    "id": "8249bdf8-7e6c-4085-a572-a40e773c6494",
+    "name": "XamBaaz — Principal Intro",
+    "category": "XamBaaz",
+    "subject": "XamBaaz Quiz Challenge for your Class 9 and 11 students",
+    "body": "Dear Principal,\n\nI'm Bithin, founder of XamBaaz. I'd like to invite your school to the XamBaaz National Quiz Challenge, an online, timed quiz for Classes 9 and 11 that shows students how ready they are for JEE, NEET and other entrance exams.\n\nEvery participant gets a free preparedness score with a breakdown of strengths and weak areas. Top scorers win Amazon vouchers and a year of XamBaaz Premium.\n\nIt runs fully online, so it needs very little from your staff.\n\nCould we find 15 minutes this week to set it up for your students?\n\nWarm regards,\nBithin\nBithindra Biswas, Founder, XamBaaz\nxambaaz.com\n\nP.S. If this isn't for you, just reply \"stop\" and I won't write again."
+  }
+]

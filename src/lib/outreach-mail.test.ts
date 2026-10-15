@@ -25,7 +25,7 @@ describe("Audit Outreach v2 mails", () => {
       expect(hasUnresolvedMerge(t.subject, subject, data)).toBeNull();
       expect(hasUnresolvedMerge(t.body, body, data)).toBeNull();
       expect(body).toMatch(/^Hi there,/); // info@ inboxes have no name
-      expect(`${subject}\n${body}`).toContain("54/100");
+      if (t.key === "audit-outreach-growth-v2") expect(body).toContain("54/100");
       expect(body).toContain(AUDIT.reportUrl);
       for (const bad of BANNED.filter((b) => !b.includes("{") && !b.includes("}"))) {
         expect(`${subject}\n${body}`.toLowerCase()).not.toContain(bad);
@@ -36,8 +36,9 @@ describe("Audit Outreach v2 mails", () => {
       expect(hasUnresolvedMerge(t.body, renderTemplate(t.body, data), data)).toMatch(/no audit data/);
     });
   }
-  it("asks for a one-word reply and offers the done-for-you route", () => {
-    expect(V2[0].body).toMatch(/reply "yes"/i);
+  it("asks one question, offers the done-for-you route, and is a personal note", () => {
+    expect(V2[0].body).toMatch(/3-step plan for \{\{website\}\}\?/);
+    expect(V2.every((t) => t.format === "plain" && t.track === false)).toBe(true);
     expect(V2[0].body).toMatch(/Brand Vibe/);
     expect(V2[0].body.split(/\s+/).length).toBeLessThan(190);
   });
@@ -53,4 +54,22 @@ describe("business types", () => {
     expect(mapsQuery("dental clinics", "Pune", "Koregaon Park")).toBe("dental clinics in Koregaon Park, Pune");
     expect(mapsQuery("cafes", " Goa ")).toBe("cafes in Goa");
   });
+});
+
+// The live mails rewritten as personal notes on 15 Oct 2026 (posted to the live app).
+import LIVE from "../../scripts/personal-templates-2026-10-15.json";
+describe("personal-note rewrites of the live mails", () => {
+  for (const t of LIVE as { name: string; subject: string; body: string }[]) {
+    it(`${t.name} reads as a short personal note`, () => {
+      const data = mergeDataFromProspect({ name: "Asha Rao", company: "Acme Dental", title: "", city: "Pune", country: "" }, AUDIT);
+      const subject = renderTemplate(t.subject, data), body = renderTemplate(t.body, data);
+      expect(hasUnresolvedMerge(t.subject, subject, data)).toBeNull();
+      expect(hasUnresolvedMerge(t.body, body, data)).toBeNull();
+      expect(body.split(/\s+/).length).toBeLessThan(170);
+      expect((body.match(/https?:\/\//g) ?? []).length).toBeLessThanOrEqual(1); // one link at most
+      expect(body).toMatch(/reply "stop"/);
+      expect(body).toMatch(/\n(Bithin|Warm regards,\nBithin)\n/);
+      for (const bad of ["cited by", "ai visibility", "nmims", "sr vp", "radio mirchi"]) expect(`${subject}\n${body}`.toLowerCase()).not.toContain(bad);
+    });
+  }
 });

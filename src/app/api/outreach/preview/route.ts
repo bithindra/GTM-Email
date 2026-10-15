@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStore } from "@/lib/db";
-import { hasUnresolvedMerge, mergeDataFromProspect, renderTemplate, spin } from "@/lib/email";
+import { hasUnresolvedMerge, isPersonal, mergeDataFromProspect, renderTemplate, spin, withOptOut } from "@/lib/email";
 import { normalizeWebsite } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
     const data = mergeDataFromProspect({ name: "", company: String(biz.name || ""), title: "", city: String(biz.city || ""), country: "" }, audit);
     const seed = website; // stable per business, like the recipient id in the sender
     const subject = renderTemplate(spin(template.subject, seed), data);
-    const body = renderTemplate(spin(template.body, seed), data);
+    const body = withOptOut(renderTemplate(spin(template.body, seed), data), isPersonal(template));
     const blocked = hasUnresolvedMerge(template.subject, subject, data) ?? hasUnresolvedMerge(template.body, body, data);
     return NextResponse.json({ subject, body, blocked });
   } catch {

@@ -153,58 +153,50 @@ maveriko.com`,
   // above ends on "just reply" after a long free report pitch; this one leads with the
   // two numbers, gives the single fix, keeps the report as the free give, then makes
   // the ask one word ("yes" to a 3-step plan) and offers the done-for-you route (Brand
-  // Vibe: fixes + AI-led growth). Plain format so it reads like a person wrote it.
+  // Vibe: fixes + AI-led growth). Plain, tracking OFF = a "personal note" (isPersonal in
+  // email.ts): sent as "Bithin from Brand Vibe", no List-Unsubscribe header, opt-out in
+  // the body — the format that reached Primary in the 13–14 Oct 2026 inbox tests.
   // Bands are left out on purpose: an empty band would block the send (hasUnresolvedMerge).
   // Claims: AI readiness = how easily AI tools can READ the site — never "cited"/"visible".
   {
     key: "audit-outreach-growth-v2",
     name: "Audit Outreach — Scores + Growth (v2)",
     category: "Maveriko",
-    subject: "{{website}} scored {{seo_score}}/100 — one fix worth making",
+    subject: "Quick note on {{website}}",
     format: "plain",
-    track: true,
+    track: false,
     body: `Hi {{first_name}},
 
-I ran {{website}} through Maveriko, a website checker I built, and two numbers are worth a minute of your time:
+I ran {{website}} through Maveriko, a website checker I built. It scored {{seo_score}}/100 for Google search and {{geo_score}}/100 for AI readiness, which is how easily ChatGPT and Google's AI answers can read your site.
 
-- Google search (SEO): {{seo_score}}/100
-- AI readiness: {{geo_score}}/100 (how easily ChatGPT, Gemini and Google's AI answers can read and understand your site)
-
-The second one matters more every month, as more people ask an AI assistant for a recommendation instead of scrolling through Google.
-
-The biggest fix on your site right now:
+The biggest fix right now:
 {{top_fix}}
 
-Your full report is free, no signup: {{report_url}}
+Your full report is free: {{report_url}}
 
-If you'd rather not handle it yourself, we fix this end to end at Brand Vibe, and go a step further: using AI to turn your website into a steady source of enquiries.
+If you'd rather have it fixed for you, and AI put to work bringing in more enquiries, that's what we do at Brand Vibe. Shall I send a short 3-step plan for {{website}}?
 
-Would a short 3-step plan for {{website}} help? Just reply "yes" and I'll send it over.
-
-Best,
-Bithindra Biswas
-Founder, Brand Vibe Consulting (IIM Ahmedabad)
+Bithin
+Bithindra Biswas, Brand Vibe Consulting
 brandvibe.co.in
 
-P.S. Not the right person? A one-line reply with who looks after your website would be much appreciated.`,
+P.S. If this isn't for you, just reply "stop" and I won't write again.`,
   },
   {
     key: "audit-outreach-followup-v2",
     name: "Audit Outreach — Follow-up (v2)",
     category: "Maveriko",
-    subject: "Re: {{website}} scored {{seo_score}}/100 — one fix worth making",
+    subject: "Re: Quick note on {{website}}",
     format: "plain",
-    track: true,
+    track: false,
     body: `Hi {{first_name}},
 
-Floating this back up in case it got buried. {{website}} is at {{seo_score}}/100 for search and {{geo_score}}/100 for AI readiness, and the top fix on the free report would move both:
-{{report_url}}
+Bumping this in case it got buried. The free report for {{website}} is here: {{report_url}}
 
-Happy to send a short 3-step plan for your site. A one-word reply is enough.
+Happy to send the 3-step plan if it's useful. A one-word reply is enough.
 
-Best,
-Bithindra Biswas
-Brand Vibe Consulting
-brandvibe.co.in`,
+Bithin
+
+P.S. If this isn't for you, just reply "stop" and I won't write again.`,
   },
 ];
