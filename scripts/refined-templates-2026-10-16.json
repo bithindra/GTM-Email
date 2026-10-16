@@ -1,0 +1,29 @@
+[
+  {
+    "id": "1b26a678-25f5-405f-8803-74397ed8e5e1",
+    "name": "AI Consulting",
+    "category": "Brand Vibe",
+    "format": "plain",
+    "track": false,
+    "subject": "AI at {{company}}",
+    "body": "Hi {{first_name}},\n\nMost companies I meet are trying AI somewhere, but few can point to a number it has actually moved.\n\nThat's the work I do at Brand Vibe: find the two or three places where AI saves real time or money, build them with your team, and hand them over running. Working systems, not a strategy deck.\n\nOne example: a Mumbai B2B distributor now runs its own AI-built lead finder and mailer, and many of its processes take up to 70% less time.\n\nI'm an IIM Ahmedabad alumnus with 20+ years running businesses, and I teach AI as guest faculty at IIT Bombay and IIM Mumbai.\n\nWorth a 15-minute call to see where AI would pay back at {{company}}?\n\nBithin\nBithindra Biswas, Founder, Brand Vibe Consulting\nbrandvibe.co.in\n\nP.S. If this isn't for you, just reply \"stop\" and I won't write again."
+  },
+  {
+    "id": "c082304c-c777-4045-ab1e-48b6a05b2c0b",
+    "name": "AI Workshop",
+    "category": "Brand Vibe",
+    "format": "plain",
+    "track": false,
+    "subject": "A hands-on AI workshop for {{company}}",
+    "body": "Hi {{first_name}},\n\nMost AI workshops end with a slide deck. Mine end with your team using AI on their own work: sales, marketing, operations or reporting.\n\nAfter a session I ran for Hettich India, their CMO, Jiteen Agarwal, said what he valued was that it dwelt on practical application rather than theory. That is the whole design.\n\nI'm an IIM Ahmedabad alumnus with 20+ years running businesses across media, telecom, banking and tech, and I teach AI as guest faculty at IIT Bombay and IIM Mumbai.\n\nShall I send a one-page outline of how a session could look for {{company}}?\n\nBithin\nBithindra Biswas, Founder, Brand Vibe Consulting\nbrandvibe.co.in\n\nP.S. If this isn't for you, just reply \"stop\" and I won't write again."
+  },
+  {
+    "id": "8249bdf8-7e6c-4085-a572-a40e773c6494",
+    "name": "XamBaaz — Principal Intro",
+    "category": "XamBaaz",
+    "format": "plain",
+    "track": false,
+    "subject": "A free Olympiad for your students on 15 November",
+    "body": "Dear Principal,\n\nI'm Bithin, founder of XamBaaz, an online practice platform for Class 8–12 students.\n\nI'd like to invite your students to the XamBaaz Olympiad, a free online contest held on one Sunday each month. The next one is on Sunday 15 November, any time between 11 am and 5 pm.\n\nIt tests logical reasoning and data interpretation in three groups: Class 8–9, Class 10 and Class 11–12. It is 20 questions in 30 minutes, and the monthly topper in each group can win a free year of XamBaaz.\n\nStudents take part from home, so it needs nothing from your staff beyond sharing one link.\n\nMay I send you a short notice you can forward to parents?\n\nWarm regards,\nBithin\nBithindra Biswas, Founder, XamBaaz\nxambaaz.com\n\nP.S. If this isn't for you, just reply \"stop\" and I won't write again."
+  }
+]
