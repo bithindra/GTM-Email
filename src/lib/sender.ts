@@ -1,6 +1,6 @@
 import { v4 as uuid } from "uuid";
 import { getStore, type Store } from "./db";
-import { renderBodyHtml, mergeDataFromProspect, renderTemplate, sendEmail, spin, formatOf, trackOf, hasUnresolvedMerge, isPersonal, withOptOut } from "./email";
+import { renderBodyHtml, mergeDataFromProspect, renderTemplate, sendEmail, closeTransports, spin, formatOf, trackOf, hasUnresolvedMerge, isPersonal, withOptOut } from "./email";
 import { resolveMailbox } from "./mailboxes";
 import { searchProspects, enrichPeople } from "./apollo";
 import { validateAddress } from "./emailcheck";
@@ -188,7 +188,9 @@ export async function sendCampaignQueued(
   const template = await store.getTemplate(campaign.templateId);
   if (!template) return { ...stats, budgetLeft: budget };
 
-  await store.setCampaignStatus(campaignId, "sending");
+  // One run per campaign at a time: a manual send, the cron and the on-open tick
+  // can overlap, and two runs over the same queue would mail people twice.
+  if (!(await store.claimCampaign(campaignId))) return { ...stats, budgetLeft: budget };
   // Attachments are excluded from getCampaign() to keep reads small. The blob (up to
   // ~27 MB) is loaded lazily, once, right before the first real send — a tick held
   // back by the daily/mailbox cap or the time budget never pulls it from Neon.
@@ -293,6 +295,7 @@ export async function sendCampaignQueued(
   const pending = stats.throttled > 0 || leftQueued > 0;
   if (pending) await store.rescheduleCampaign(campaignId, campaign.scheduledAt ?? new Date().toISOString());
   else await store.setCampaignStatus(campaignId, "sent");
+  closeTransports();
   return { ...stats, budgetLeft: left };
 }
 
@@ -391,5 +394,6 @@ async function sendFollowupPass(
       }
     }
   }
+  closeTransports();
   return { ...stats, due: due.length, budgetLeft: left };
 }

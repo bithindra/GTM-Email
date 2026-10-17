@@ -2,6 +2,10 @@ import { v4 as uuid } from "uuid";
 import type { Prospect, Template, Campaign, Recipient, RecipientStatus, List, SourcingRequest, SearchFilters, Attachment, AuditRecord } from "./types";
 import { TEMPLATE_LIBRARY } from "./templateLibrary";
 
+// A send run is capped at 300 s by the platform, so a claim this old belongs to a dead run.
+// (The Postgres queries spell it out as interval '10 minutes' — keep the two in step.)
+export const STALE_SEND_MS = 10 * 60 * 1000;
+
 // Templates list in category order (uncategorised last), newest-edited first inside a
 // group — so the UI can render category headers by walking the list once.
 function templateOrder(a: Template, b: Template): number {
@@ -41,6 +45,9 @@ export interface Store {
   // Back to 'scheduled' at the given time, so the dispatcher resumes it (leftover mail).
   rescheduleCampaign(id: string, scheduledAt: string): Promise<void>;
   setCampaignStatus(id: string, status: Campaign["status"]): Promise<void>;
+  // Take a campaign for one send run. False while another run holds it (a run can
+  // last 300 s at most, so a claim older than 10 minutes was cut off and is free again).
+  claimCampaign(id: string): Promise<boolean>;
   deleteCampaign(id: string): Promise<void>;
   dueScheduledCampaigns(): Promise<Campaign[]>;
   getRecipients(campaignId: string): Promise<Recipient[]>;
@@ -286,6 +293,16 @@ class MemoryStore implements Store {
     const c = this.campaigns.find((x) => x.id === id);
     if (c) c.status = status;
   }
+  private claims = new Map<string, number>();
+  async claimCampaign(id: string) {
+    const c = this.campaigns.find((x) => x.id === id);
+    if (!c) return false;
+    const since = this.claims.get(id);
+    if (c.status === "sending" && since && Date.now() - since < STALE_SEND_MS) return false;
+    c.status = "sending";
+    this.claims.set(id, Date.now());
+    return true;
+  }
   async rescheduleCampaign(id: string, scheduledAt: string) {
     const c = this.campaigns.find((x) => x.id === id);
     if (c) { c.status = "scheduled"; c.scheduledAt = scheduledAt; }
@@ -296,7 +313,10 @@ class MemoryStore implements Store {
   }
   async dueScheduledCampaigns() {
     const now = Date.now();
-    return this.campaigns.filter((c) => c.status === "scheduled" && c.scheduledAt && new Date(c.scheduledAt).getTime() <= now);
+    const stale = (id: string) => now - (this.claims.get(id) ?? 0) >= STALE_SEND_MS;
+    return this.campaigns.filter((c) =>
+      (c.status === "scheduled" && c.scheduledAt && new Date(c.scheduledAt).getTime() <= now) ||
+      (c.status === "sending" && stale(c.id) && this.recipients.some((r) => r.campaignId === c.id && r.status === "queued")));
   }
   async getRecipients(campaignId: string) {
     return this.recipients.filter((r) => r.campaignId === campaignId);
@@ -612,6 +632,7 @@ class PgStore implements Store {
     await sql`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS followup2_days int DEFAULT 7`;
     await sql`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS from_mailbox text`;
     await sql`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS send_tz text`;
+    await sql`ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS sending_since timestamptz`;
     await sql`CREATE TABLE IF NOT EXISTS recipients (
       id text PRIMARY KEY, campaign_id text, prospect_id text, name text, email text, company text,
       status text, sent_at timestamptz, delivered_at timestamptz, opened_at timestamptz,
@@ -840,6 +861,14 @@ class PgStore implements Store {
     const sql = await this.db();
     await sql`UPDATE campaigns SET status=${status} WHERE id=${id}`;
   }
+  async claimCampaign(id: string) {
+    const sql = await this.db();
+    const rows = await sql`UPDATE campaigns SET status='sending', sending_since=now()
+      WHERE id=${id} AND NOT (status='sending' AND sending_since IS NOT NULL
+        AND sending_since > now() - interval '10 minutes')
+      RETURNING id`;
+    return rows.length > 0;
+  }
   async rescheduleCampaign(id: string, scheduledAt: string) {
     const sql = await this.db();
     await sql`UPDATE campaigns SET status='scheduled', scheduled_at=${scheduledAt} WHERE id=${id}`;
@@ -854,7 +883,13 @@ class PgStore implements Store {
     const rows = await sql`SELECT c.id, c.name, c.template_id, c.followup_template_id, c.followup_days,
       c.followup2_template_id, c.followup2_days, c.status, c.scheduled_at, c.from_mailbox, c.send_tz, c.created_at,
       (SELECT count(*)::int FROM recipients r WHERE r.campaign_id=c.id) AS rc
-      FROM campaigns c WHERE c.status='scheduled' AND c.scheduled_at IS NOT NULL AND c.scheduled_at <= now()`;
+      FROM campaigns c
+      WHERE (c.status='scheduled' AND c.scheduled_at IS NOT NULL AND c.scheduled_at <= now())
+         -- A run cut off by the platform's time limit never got to hand the campaign
+         -- back, so it would sit at 'sending' forever. Pick it up again once stale.
+         OR (c.status='sending'
+             AND (c.sending_since IS NULL OR c.sending_since <= now() - interval '10 minutes')
+             AND EXISTS (SELECT 1 FROM recipients q WHERE q.campaign_id=c.id AND q.status='queued'))`;
     return rows.map((r) => this.mapCampaign(r));
   }
   async getRecipients(campaignId: string) {

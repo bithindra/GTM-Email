@@ -247,6 +247,15 @@ export type SendResult = { ok: boolean; simulated: boolean; id?: string; error?:
 // The recipient address itself is bad — trying another route would only bounce again.
 const RECIPIENT_INVALID = /5\.1\.[0-9]\b|user unknown|no such user|does not exist|address rejected|recipient rejected/i;
 
+// Pooled SMTP connections, reused across the mails of one send run. Closed at the end
+// of each run (closeTransports) so an idle socket is never reused on a later run.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const transports = new Map<string, any>();
+export function closeTransports() {
+  for (const t of transports.values()) { try { t.close(); } catch { /* already closed */ } }
+  transports.clear();
+}
+
 export async function sendEmail(opts: {
   to: string;
   subject: string;
@@ -286,7 +295,18 @@ export async function sendEmail(opts: {
       attachments: files.map((a) => ({ filename: a.filename, content: a.content, encoding: "base64" as const, contentType: a.contentType })),
     };
     const via = async (t: { host: string; port: number; user: string; pass: string }) => {
-      const transport = nodemailer.createTransport({ host: t.host, port: t.port, secure: t.port === 465, auth: { user: t.user, pass: t.pass } });
+      // One kept-open connection per server for the whole run. A fresh connect + TLS +
+      // login to SES in Sydney cost ~4 s a mail, which held a 4-minute run to ~37 mails.
+      const key = `${t.host}:${t.port}:${t.user}`;
+      let transport = transports.get(key);
+      if (!transport) {
+        transport = nodemailer.createTransport({
+          host: t.host, port: t.port, secure: t.port === 465, auth: { user: t.user, pass: t.pass },
+          pool: true, maxConnections: 1, maxMessages: 100,
+          connectionTimeout: 20_000, greetingTimeout: 15_000, socketTimeout: 30_000,
+        });
+        transports.set(key, transport);
+      }
       return transport.sendMail(message);
     };
     // Amazon SES first when this mailbox is set to use it. If SES refuses for any reason
