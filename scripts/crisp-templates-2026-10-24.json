@@ -1,0 +1,29 @@
+[
+  {
+    "id": "1b26a678-25f5-405f-8803-74397ed8e5e1",
+    "name": "AI Consulting",
+    "category": "Brand Vibe",
+    "format": "plain",
+    "track": false,
+    "subject": "AI for your team",
+    "body": "Hi {{first_name}},\n\nIs AI actually saving your team time yet?\n\nI help companies put AI to work in sales, marketing and reporting. We build it with your team and stay until it runs.\n\nFor one Mumbai distributor, many tasks now take up to 70% less time.\n\nI'm an IIM Ahmedabad alumnus, and I teach AI applications at IIT Bombay and IIM Mumbai.\n\nOpen to a 15-minute call this week?\n\nBithin\nBithindra Biswas, Founder, Brand Vibe Consulting\nbrandvibe.co.in\n\nP.S. If this isn't for you, just reply \"stop\" and I won't write again."
+  },
+  {
+    "id": "c082304c-c777-4045-ab1e-48b6a05b2c0b",
+    "name": "AI Workshop",
+    "category": "Brand Vibe",
+    "format": "plain",
+    "track": false,
+    "subject": "AI workshop for your team",
+    "body": "Hi {{first_name}},\n\nI run hands-on AI workshops for company teams. Everyone works on their own tasks, so they can use AI at work the very next day.\n\nHettich India's CMO said he liked that it was practical, not theory.\n\nI'm an IIM Ahmedabad alumnus, and I teach AI applications at IIT Bombay and IIM Mumbai.\n\nShall I send you a one-page plan?\n\nBithin\nBithindra Biswas, Founder, Brand Vibe Consulting\nbrandvibe.co.in\n\nP.S. If this isn't for you, just reply \"stop\" and I won't write again."
+  },
+  {
+    "id": "8249bdf8-7e6c-4085-a572-a40e773c6494",
+    "name": "XamBaaz — Principal Intro",
+    "category": "XamBaaz",
+    "format": "plain",
+    "track": false,
+    "subject": "Free Olympiad for your students on 15 November",
+    "body": "Dear Principal,\n\nI'm Bithin Biswas, founder of XamBaaz, an AI-led practice platform for Classes 8 to 12.\n\nOn Sunday, 15 November, we're running the free online XamBaaz Olympiad on logical reasoning and data interpretation.\n\nStudents take it from home, any time between 11 am and 5 pm. It's 20 questions in 30 minutes, in three groups: Classes 8–9, 10 and 11–12. The topper in each group can win a year of XamBaaz PRO.\n\nYour teachers don't need to do anything. Just share the link with parents.\n\nWould you like a one-page overview, or a quick 10-minute call? Just reply \"Overview\" or \"Call\".\n\nWarm regards,\nBithin Biswas\nFounder, XamBaaz\nxambaaz.com\n\nP.S. If this isn't for you, just reply \"stop\" and I won't write again."
+  }
+]
