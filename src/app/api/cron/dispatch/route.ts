@@ -4,7 +4,11 @@ import { runDispatch } from "@/lib/sender";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // paced sends need room; loop self-limits via DISPATCH_TIME_BUDGET_MS
 
-// Scheduled six times in vercel.json (Hobby allows daily crons only, fired anywhere
+// 29 Oct 2026: every 2 hours, not hourly (founder: "trim the gtm flow usage" — each run wakes
+// Neon for 5+ minutes). 03:30–13:30 UTC = 09:00–19:00 IST, plus 17:00 UTC for the US. A run
+// sends ~90 mails in its 240 s budget (1–2.5 s pace), so six India runs still cover the
+// 300-a-day SES cap; the queue simply drains in fewer, larger runs.
+// (History:) Scheduled six times in vercel.json (Hobby allows daily crons only, fired anywhere
 // in the hour). This is the only always-on trigger — the GitHub Action was never
 // pushed. Each run sends only campaigns whose own zone is open, so:
 //   0 4 / 6 / 9 / 11 / 13 UTC → 09:30–19:29 IST (09:00–20:00 window), ~2 h apart;
