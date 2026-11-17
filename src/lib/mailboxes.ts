@@ -15,12 +15,19 @@
 // account lives). The address, From, Reply-To and IMAP stay the mailbox's own, so
 // replies and SES's forwarded bounces still land in the inbox the app already scans,
 // and the mailbox's own SMTP remains the fallback whenever SES refuses.
+//
+// A slot can also be an ALIAS of another account: LOGIN_USER_n names the account that
+// signs in (SMTP and IMAP) while SMTP_USER_n stays the address mail is sent from and
+// replies go to. Hostinger's mail ends 24 Nov 2026, so partnerships@xambaaz.com and
+// hello@brandvibe.co.in became Google Workspace aliases of info@brandvibe.co.in: those
+// slots sign in to smtp/imap.gmail.com as info@ with its App Password.
 
 export type Mailbox = {
   id: string; // the lowercased sending address — stable id stored on campaigns
   label: string; // display string for the dropdown
   from: string; // EMAIL_FROM value, e.g. `Brand Vibe <brandvibe2k26@gmail.com>`
-  user: string; // SMTP username
+  user: string; // the mailbox's address (= its id, From and Reply-To)
+  login: string; // the account that signs in to SMTP/IMAP — `user` unless it is an alias
   pass: string; // SMTP password / App Password
   replyTo: string; // where replies land (the mailbox's own address)
   host: string; // SMTP host, e.g. smtp.gmail.com or smtp.hostinger.com
@@ -65,7 +72,7 @@ const DEFAULT_PORT = Number(process.env.SMTP_PORT) || 465;
 export function listMailboxes(): Mailbox[] {
   const boxes: Mailbox[] = [];
   const seen = new Set<string>();
-  const add = (user?: string, pass?: string, from?: string, host?: string, port?: string, imapHost?: string, imapPort?: string, sendVia?: string) => {
+  const add = (user?: string, pass?: string, from?: string, host?: string, port?: string, imapHost?: string, imapPort?: string, sendVia?: string, login?: string) => {
     if (!user || !pass) return;
     const id = user.toLowerCase();
     if (seen.has(id)) return;
@@ -74,7 +81,7 @@ export function listMailboxes(): Mailbox[] {
     const smtpHost = host || DEFAULT_HOST;
     const relay = sesRelay(sendVia);
     boxes.push({
-      id, label: `${displayName(f, user)} · ${user}${relay ? " · via Amazon SES" : ""}`, from: f, user, pass, replyTo: user,
+      id, label: `${displayName(f, user)} · ${user}${relay ? " · via Amazon SES" : ""}`, from: f, user, login: login?.trim() || user, pass, replyTo: user,
       relay,
       host: smtpHost,
       port: Number(port) || DEFAULT_PORT,
@@ -83,9 +90,9 @@ export function listMailboxes(): Mailbox[] {
     });
   };
   // The primary slot keeps honouring the un-suffixed IMAP_HOST/IMAP_PORT it always did.
-  add(process.env.SMTP_USER, process.env.SMTP_PASS, process.env.EMAIL_FROM, process.env.SMTP_HOST, process.env.SMTP_PORT, process.env.IMAP_HOST, process.env.IMAP_PORT, process.env.SEND_VIA);
+  add(process.env.SMTP_USER, process.env.SMTP_PASS, process.env.EMAIL_FROM, process.env.SMTP_HOST, process.env.SMTP_PORT, process.env.IMAP_HOST, process.env.IMAP_PORT, process.env.SEND_VIA, process.env.LOGIN_USER);
   for (const n of [2, 3, 4, 5]) {
-    add(process.env[`SMTP_USER_${n}`], process.env[`SMTP_PASS_${n}`], process.env[`EMAIL_FROM_${n}`], process.env[`SMTP_HOST_${n}`], process.env[`SMTP_PORT_${n}`], process.env[`IMAP_HOST_${n}`], process.env[`IMAP_PORT_${n}`], process.env[`SEND_VIA_${n}`]);
+    add(process.env[`SMTP_USER_${n}`], process.env[`SMTP_PASS_${n}`], process.env[`EMAIL_FROM_${n}`], process.env[`SMTP_HOST_${n}`], process.env[`SMTP_PORT_${n}`], process.env[`IMAP_HOST_${n}`], process.env[`IMAP_PORT_${n}`], process.env[`SEND_VIA_${n}`], process.env[`LOGIN_USER_${n}`]);
   }
   return boxes;
 }

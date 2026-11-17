@@ -323,7 +323,7 @@ export async function sendEmail(opts: {
       }
     }
     try {
-      const info = await via(mailbox);
+      const info = await via({ host: mailbox.host, port: mailbox.port, user: mailbox.login, pass: mailbox.pass });
       return { ok: true, simulated: false, id: info.messageId, via: "direct" };
     } catch (e) {
       return { ok: false, simulated: false, error: (e as Error).message, via: "direct" };

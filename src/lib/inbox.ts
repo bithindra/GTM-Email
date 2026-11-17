@@ -110,7 +110,7 @@ async function scanOne(
       host: box.imapHost,
       port: box.imapPort,
       secure: true,
-      auth: { user: box.user, pass: box.pass },
+      auth: { user: box.login, pass: box.pass },
       logger: false,
     });
     await client.connect();
@@ -225,8 +225,18 @@ export async function scanInbox(store: Store): Promise<InboxScan> {
 
   // Scanned concurrently: the dispatch tick runs under a wall-clock budget, so total
   // time should be the slowest mailbox rather than the sum of all of them.
+  // Aliases of one account (LOGIN_USER_n) share a single inbox: read it once, named
+  // after every address it holds, rather than opening the same IMAP session twice.
+  const accounts = new Map<string, Mailbox[]>();
+  for (const b of boxes) {
+    const key = `${b.imapHost.toLowerCase()}|${b.login.toLowerCase()}`;
+    accounts.set(key, [...(accounts.get(key) ?? []), b]);
+  }
   const claimed = new Set<string>();
-  const results = await Promise.all(boxes.map((b) => scanOne(store, b, byEmail, claimed)));
+  const results = await Promise.all([...accounts.values()].map(async (group) => {
+    const r = await scanOne(store, group[0], byEmail, claimed);
+    return group.length > 1 ? { ...r, id: group.map((b) => b.id).join(" + ") } : r;
+  }));
 
   const scanned = results.reduce((n, r) => n + r.scanned, 0);
   const replies = results.reduce((n, r) => n + r.replies, 0);

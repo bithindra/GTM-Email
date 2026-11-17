@@ -20,7 +20,7 @@ export async function GET() {
   const boxes = listMailboxes();
   const mailboxes = await Promise.all(
     boxes.map(async (m) => {
-      const r = await verifyMailbox(m);
+      const r = await verifyMailbox({ host: m.host, port: m.port, user: m.login, pass: m.pass });
       // A mailbox that sends through Amazon SES has two logins to prove: SES (sending)
       // and its own (fallback sending + reading replies and bounces).
       const relay = m.relay ? await verifyMailbox(m.relay) : null;

@@ -75,3 +75,26 @@ describe("mailboxes sending through Amazon SES", () => {
     expect(listMailboxes().find((b) => b.id === "hello@brandvibe.co.in")!.relay).toBeNull();
   });
 });
+
+describe("alias mailboxes (Google Workspace, after Hostinger mail ended)", () => {
+  afterEach(() => vi.unstubAllEnvs());
+  it("sign in as the account but keep the alias as address, Reply-To and id", () => {
+    vi.stubEnv("SMTP_USER", "");
+    vi.stubEnv("SMTP_USER_3", "partnerships@xambaaz.com");
+    vi.stubEnv("SMTP_PASS_3", "app-password");
+    vi.stubEnv("SMTP_HOST_3", "smtp.gmail.com");
+    vi.stubEnv("LOGIN_USER_3", "info@brandvibe.co.in");
+    const m = listMailboxes().find((b) => b.id === "partnerships@xambaaz.com")!;
+    expect(m.login).toBe("info@brandvibe.co.in");
+    expect(m.user).toBe("partnerships@xambaaz.com");
+    expect(m.replyTo).toBe("partnerships@xambaaz.com");
+    expect(m.imapHost).toBe("imap.gmail.com");
+  });
+  it("sign in as the address itself when no LOGIN_USER is set", () => {
+    vi.stubEnv("SMTP_USER", "");
+    vi.stubEnv("SMTP_USER_4", "hello@brandvibe.co.in");
+    vi.stubEnv("SMTP_PASS_4", "x");
+    vi.stubEnv("LOGIN_USER_4", "");
+    expect(listMailboxes().find((b) => b.id === "hello@brandvibe.co.in")!.login).toBe("hello@brandvibe.co.in");
+  });
+});
