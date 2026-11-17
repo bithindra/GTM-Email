@@ -14,8 +14,17 @@ GTM="$HOME/Documents/Claude/gtm-flow"
 XB="$HOME/Documents/Claude/scholarrank"
 ACCOUNT="info@brandvibe.co.in"
 
-read -rsp "App Password for $ACCOUNT (16 letters, spaces are fine): " PW; echo
-PW="${PW// /}"
+# Google shows the password as four groups of four, and a copy often carries a line break
+# partway through, so keep reading lines until all 16 letters are in.
+printf "App Password for %s (16 letters, spaces and line breaks are fine): " "$ACCOUNT"
+PW=""
+while [ "${#PW}" -lt 16 ]; do
+  IFS= read -rs LINE || break
+  LINE="${LINE//[[:space:]]/}"
+  PW="$PW$LINE"
+  [ "${#PW}" -lt 16 ] && [ -n "$LINE" ] && printf "\n  got %s of 16 letters, paste or type the rest: " "${#PW}"
+done
+echo
 [ "${#PW}" -eq 16 ] || { echo "That is ${#PW} characters, expected 16. Nothing changed."; exit 1; }
 
 echo "Checking the password with imap.gmail.com…"
